@@ -14,6 +14,7 @@ enum CLIError: Error, Equatable, Sendable {
     case timedOut
     case nonZeroExit(Int)
     case missing          // binary not on PATH / not executable
+    case decoding(String) // CLI output failed to decode into a typed model
 }
 
 /// Production runner backed by `Foundation.Process`.
