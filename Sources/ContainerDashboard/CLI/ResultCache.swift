@@ -31,7 +31,7 @@ final class ResultCache: CommandRunner, Sendable {
         return data
     }
 
-    func stream(binary: String, args: [String]) -> AsyncThrowingStream<String, Error> {
+    func stream(binary: String, args: [String]) -> LogStream {
         inner.stream(binary: binary, args: args)
     }
 

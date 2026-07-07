@@ -49,15 +49,16 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         return data
     }
 
-    func stream(binary: String, args: [String]) -> AsyncThrowingStream<String, Error> {
+    func stream(binary: String, args: [String]) -> LogStream {
         let k = Self.key(binary, args)
         let lines = store.withLock { s -> [String] in
             s.calls.append((binary, args))
             return s.streams[k] ?? []
         }
-        return AsyncThrowingStream { c in
+        let linesStream = AsyncThrowingStream<String, Error> { c in
             for line in lines { c.yield(line) }
             c.finish()
         }
+        return LogStream(lines: linesStream, cancel: { })
     }
 }

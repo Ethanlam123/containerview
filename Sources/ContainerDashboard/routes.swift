@@ -26,6 +26,10 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
         try await ContainerCLI.machineInspect(runner, id: try validatedID(req))
     }
 
+    app.get("api", "containers", ":id", "logs") { req async throws -> Response in
+        SSE.logs(runner: runner, id: try validatedID(req))
+    }
+
     app.get("api", "system", "properties") { req async throws -> Response in
         try await passthrough { try await ContainerCLI.systemProperties(runner) }
     }

@@ -65,7 +65,7 @@ private let sampleArgs = ["ls", "--format", "json", "--all"]
     let cache = ResultCache(inner: fake, ttl: .seconds(5))
 
     for _ in 0..<3 {
-        let got = try await collect(cache.stream(binary: "container", args: ["logs", "-f", "x"]))
+        let got = try await collect(cache.stream(binary: "container", args: ["logs", "-f", "x"]).lines)
         #expect(got == ["line1", "line2"])
     }
     #expect(fake.calls.count == 3)   // every stream hits the inner runner

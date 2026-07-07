@@ -75,7 +75,7 @@ enum ContainerCLI {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    static func logsStream(_ r: some CommandRunner, id: String) -> AsyncThrowingStream<String, Error> {
+    static func logsStream(_ r: some CommandRunner, id: String) -> LogStream {
         r.stream(binary: "container", args: ["logs", "-f", id])
     }
 

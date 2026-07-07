@@ -107,7 +107,7 @@ private func args(_ fake: FakeCommandRunner) throws -> [String] {
 @Test func logsStream_args() async throws {
     let f = fake("container", ["logs", "-f", "hermes"], lines: ["line1", "line2"])
     var got: [String] = []
-    for try await line in ContainerCLI.logsStream(f, id: "hermes") { got.append(line) }
+    for try await line in ContainerCLI.logsStream(f, id: "hermes").lines { got.append(line) }
     #expect(got == ["line1", "line2"])
     #expect(try args(f) == ["logs", "-f", "hermes"])
 }
