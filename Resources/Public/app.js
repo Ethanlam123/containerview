@@ -35,6 +35,7 @@ $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') close
 $('advanced-toggle').addEventListener('toggle', loadAdvanced);
 
 document.addEventListener('visibilitychange', onVisibility);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
 // Render last-known-good immediately (before first poll resolves) so a stopped
 // system still shows something.
