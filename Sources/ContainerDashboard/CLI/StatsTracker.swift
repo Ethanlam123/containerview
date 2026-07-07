@@ -1,7 +1,7 @@
 import Foundation
 
 /// One container's stats plus the CPU% derived from the previous snapshot.
-struct StatsWithCPU: Sendable {
+struct StatsWithCPU: Codable, Sendable {
     let stats: ContainerStats
     let cpuPercent: Double
 
