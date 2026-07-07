@@ -1,7 +1,7 @@
 // Pure-ish render functions: given a DOM root element id and a data slice,
 // stamp the panel. No fetching here - app.js owns the poll loop and hands
 // rendered state to these. Sparkline history is kept in module state.
-import { formatBytes, formatPercent, shortHash } from './api.js';
+import { formatBytes, formatPercent, shortHash, esc, cssEscape } from './api.js';
 
 const els = {
   statusBadge:    () => document.getElementById('status-badge'),
@@ -89,23 +89,59 @@ export function renderBanners(err, warnings) {
 }
 
 /// Containers table + resource overview + sparklines.
-export function renderContainers(state, expanded, onToggle) {
+///
+/// The summary rows are rebuilt each tick, but any open detail drawer
+/// (`tr.row-detail`) is detached before the rebuild and re-attached after, so
+/// its DOM nodes - and the logs `pre` + button listeners they carry - survive
+/// polling instead of resetting to "loading..." every interval. Details are
+/// inserted/removed by `app.js` on toggle; this function only preserves them.
+export function renderContainers(state, expanded, onToggle, onOrphaned) {
   const tbody = els.containersBody();
   const containers = (state && state.containers) || [];
-  const statsById = indexStats(state);
+
+  // One pass: stats-by-id map + sparkline aggregate (was two walks).
+  const statsById = {};
+  let aggCpu = 0, aggMem = 0;
+  for (const s of (state && state.stats) || []) {
+    statsById[s.stats?.id || s.id] = s;
+    aggCpu += s.cpuPercent || 0;
+    aggMem += s.stats?.memoryUsageBytes || 0;
+  }
+
   els.containersCount().textContent = containers.length ? `${containers.length}` : '';
   els.containersEmpty().classList.toggle('hidden', containers.length > 0);
+
+  // Snapshot open detail nodes so the innerHTML rebuild below does not destroy
+  // them; they are re-attached right after their summary row.
+  const liveDetails = new Map();
+  for (const d of Array.from(tbody.querySelectorAll('tr.row-detail'))) {
+    liveDetails.set(d.dataset.detail, d);
+  }
 
   if (containers.length === 0) {
     tbody.innerHTML = '';
   } else {
-    tbody.innerHTML = containers.map((c) => rowHtml(c, statsById[c.id], expanded.has(c.id))).join('');
+    tbody.innerHTML = containers.map((c) => rowHtml(c, statsById[c.id])).join('');
     tbody.querySelectorAll('tr.row').forEach((tr) => {
       tr.addEventListener('click', (e) => {
         if (e.target.closest('button, .expand-caret')) return;
         onToggle(tr.dataset.id);
       });
+      // Keep the caret reflecting expand state on the freshly built row.
+      if (expanded.has(tr.dataset.id)) {
+        const c = tr.querySelector('.expand-caret');
+        if (c) { c.classList.add('open'); c.innerHTML = '&#9662;'; }
+      }
+      // Re-attach this row's preserved detail, if any.
+      const detail = liveDetails.get(tr.dataset.id);
+      if (detail) tr.after(detail);
     });
+  }
+
+  // Rows that vanished this tick: drop their orphaned detail + tell the caller
+  // (it owns the logs stream + expanded set).
+  for (const [id, d] of liveDetails) {
+    if (!containers.some((c) => c.id === id)) { d.remove(); if (onOrphaned) onOrphaned(id); }
   }
 
   // Resource overview cards.
@@ -115,28 +151,12 @@ export function renderContainers(state, expanded, onToggle) {
   els.resMemory().textContent = formatBytes(memAlloc);
   els.resNetworks().textContent = (state && state.networks?.length) ?? '-';
 
-  // Sparkline: aggregate CPU% + memory across running containers' stats.
-  const aggStats = (state && state.stats) || [];
-  const agg = aggStats.reduce(
-    (a, s) => {
-      a.cpu += s.cpuPercent || 0;
-      a.mem += s.stats?.memoryUsageBytes || 0;
-      return a;
-    },
-    { cpu: 0, mem: 0 }
-  );
-  pushSpark(agg.cpu, agg.mem);
-  drawSpark(els.sparkCpu(), sparkHistory.cpu, els.sparkCpuVal(), formatPercent(agg.cpu));
-  drawSpark(els.sparkMem(), sparkHistory.mem, els.sparkMemVal(), formatBytes(agg.mem));
+  pushSpark(aggCpu, aggMem);
+  drawSpark(els.sparkCpu(), sparkHistory.cpu, els.sparkCpuVal(), formatPercent(aggCpu));
+  drawSpark(els.sparkMem(), sparkHistory.mem, els.sparkMemVal(), formatBytes(aggMem));
 }
 
-function indexStats(state) {
-  const map = {};
-  for (const s of (state && state.stats) || []) map[s.stats?.id || s.id] = s;
-  return map;
-}
-
-function rowHtml(c, st, isOpen) {
+function rowHtml(c, st) {
   const cfg = c.configuration || {};
   const state = (c.status?.state || 'unknown').toLowerCase();
   const net0 = c.status?.networks?.[0];
@@ -146,7 +166,7 @@ function rowHtml(c, st, isOpen) {
   const arch = cfg.platform?.architecture || '-';
   return `
     <tr class="row" data-id="${esc(c.id)}">
-      <td><span class="expand-caret ${isOpen ? 'open' : ''}">${isOpen ? '&#9662;' : '&#9656;'}</span></td>
+      <td><span class="expand-caret">&#9656;</span></td>
       <td class="row-name">${esc(cfg.id || c.id)}</td>
       <td class="row-img">${esc(cfg.image?.reference || '-')}</td>
       <td><span class="pill pill-${pillClass(state)}">${esc(state)}</span></td>
@@ -160,7 +180,6 @@ function rowHtml(c, st, isOpen) {
         <button class="btn btn-sm btn-ghost btn-danger" data-act="kill">Kill</button>
       </td>
     </tr>
-    ${isOpen ? `<tr class="row-detail" data-detail="${esc(c.id)}"><td colspan="9"><div class="detail-inner" data-detail-body="${esc(c.id)}">loading...</div></td></tr>` : ''}
   `;
 }
 
@@ -176,8 +195,6 @@ export function renderContainerDetail(body, id) {
   if (!root) return;
   const c = Array.isArray(body) ? body[0] : body;
   if (!c) { root.textContent = 'no detail'; return; }
-  const stEl = document.querySelector(`tr.row[data-id="${cssEscape(id)}"]`);
-  // Stats may not be in inspect; reuse row-level is not available here, so show inspect fields.
   const ports = c.configuration?.publishedPorts || [];
   const mounts = c.configuration?.mounts || [];
   root.innerHTML = `
@@ -254,19 +271,20 @@ export function renderImages(state, filter, onOpen) {
   const root = els.imagesGrid();
   els.imagesEmpty().classList.toggle('hidden', images.length > 0);
   const f = (filter || '').toLowerCase();
-  const filtered = images.filter((i) => !f || (i.configuration?.name || '').toLowerCase().includes(f));
-  const totalSize = images.reduce((a, i) => {
+  // Pick each image's representative variant once (used for both the storage
+  // total and the card render) instead of re-walking variants twice.
+  const picked = images.map((i) => {
     const v = i.variants?.find((x) => /arm64/.test(x.platform?.architecture || '')) || i.variants?.[0];
-    return a + (v?.size || 0);
-  }, 0);
+    return { i, v };
+  });
+  const totalSize = picked.reduce((a, { v }) => a + (v?.size || 0), 0);
   els.imagesStorage().style.width = Math.min(100, totalSize / (50 * 1024 * 1024 * 1024) * 100) + '%';
+  const filtered = picked.filter(({ i }) => !f || (i.configuration?.name || '').toLowerCase().includes(f));
   if (filtered.length === 0) {
     root.innerHTML = images.length ? '<p class="empty">No matches.</p>' : '';
     return;
   }
-  root.innerHTML = filtered.map((i) => {
-    const v = i.variants?.find((x) => /arm64/.test(x.platform?.architecture || '')) || i.variants?.[0];
-    return `
+  root.innerHTML = filtered.map(({ i, v }) => `
       <div class="image-card" data-image="${esc(i.configuration?.name || '')}">
         <div class="image-name">${esc(i.configuration?.name || i.id)}</div>
         <div class="image-meta">
@@ -274,8 +292,7 @@ export function renderImages(state, filter, onOpen) {
           <span>${formatBytes(v?.size)}</span>
         </div>
       </div>
-    `;
-  }).join('');
+    `).join('');
   root.querySelectorAll('[data-image]').forEach((card) => {
     card.addEventListener('click', () => onOpen(card.dataset.image));
   });
@@ -341,15 +358,4 @@ function drawSpark(svg, data, valEl, valText) {
   const pts = data.map((v, i) => `${(offset + i * step).toFixed(2)},${(24 - (v / max) * 22).toFixed(2)}`).join(' ');
   poly.setAttribute('points', pts);
   valEl.textContent = valText;
-}
-
-// ---------- escape helpers ----------
-
-function esc(s) { return escape(s == null ? '' : String(s)); }
-function escape(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-function cssEscape(s) {
-  if (window.CSS && CSS.escape) return CSS.escape(s);
-  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
 }

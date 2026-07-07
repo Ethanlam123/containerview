@@ -84,3 +84,18 @@ export function shortHash(s, len = 12) {
   if (!s) return '-';
   return s.replace(/^sha256:/, '').slice(0, len);
 }
+
+// ---------- DOM helpers (shared by render.js + app.js) ----------
+
+/// HTML-escape a value for safe insertion via innerHTML.
+export function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+/// Escape a value for use in a CSS attribute selector ([data-id="..."]).
+export function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
+}

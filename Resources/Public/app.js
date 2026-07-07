@@ -76,9 +76,9 @@ async function poll(manual) {
     paint(state, true);
     renderBanners(null, state.warnings);
   } catch (err) {
-    renderHeader(lastState, false);
     renderBanners(err, lastState?.warnings || []);
-    if (lastState) paint(lastState, false);   // keep showing last-known-good
+    if (lastState) paint(lastState, false);   // keep showing last-known-good (paint renders the header)
+    else renderHeader(null, false);
   } finally {
     inFlight = false;
     setPolling(false);
@@ -87,7 +87,9 @@ async function poll(manual) {
 
 function paint(state, ok) {
   renderHeader(state, ok);
-  renderContainers(state, expanded, toggleExpand);
+  // onOrphaned closes the logs stream + clears `expanded` for any container
+  // that vanished this tick (renderContainers drops its detail row).
+  renderContainers(state, expanded, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); });
   renderBuilder(state);
   renderDiskUsage(state, onPrune);
   renderImages(state, $('image-search').value, openImageModal);
@@ -97,65 +99,74 @@ function paint(state, ok) {
 
 // ---------- row expansion + logs ----------
 
+// Detail rows are managed here (toggle) and preserved by renderContainers
+// (snapshotted + re-attached across the per-tick rebuild), so an open drawer
+// and its live SSE `pre` survive polling.
 async function toggleExpand(id) {
+  const row = document.querySelector(`tr.row[data-id="${api.cssEscape(id)}"]`);
   if (expanded.has(id)) {
     expanded.delete(id);
     closeLogs(id);
-  } else {
-    expanded.add(id);
-    // Render the row detail body via inspect, then open the SSE logs drawer.
-    try {
-      const detail = await api.inspectContainer(id);
-      renderContainerDetail(detail, id);
-      openLogs(id);
-    } catch (err) {
-      const root = document.querySelector(`[data-detail-body="${cssEscape(id)}"]`);
-      if (root) root.innerHTML = `<div class="row-error">detail unavailable: ${esc(err.message)}</div>`;
-    }
+    const d = document.querySelector(`tr.row-detail[data-detail="${api.cssEscape(id)}"]`);
+    if (d) d.remove();
+    setCaret(row, false);
+    return;
   }
-  renderContainers(lastState, expanded, toggleExpand);
-  // After re-render, re-stamp any open detail bodies + restart their logs.
-  for (const openId of expanded) ensureDetailRendered(openId);
+  expanded.add(id);
+  setCaret(row, true);
+  insertDetailPlaceholder(id, row);
+  try {
+    const detail = await api.inspectContainer(id);
+    renderContainerDetail(detail, id);
+    openLogs(id);
+  } catch (err) {
+    const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
+    if (root) root.innerHTML = `<div class="row-error">detail unavailable: ${api.esc(err.message)}</div>`;
+  }
 }
 
-function ensureDetailRendered(id) {
-  // The table innerHTML rewrite drops the detail body; re-fetch is avoided by
-  // keeping nothing - the click handler re-runs inspect. For logs, only open
-  // streams for rows whose detail is currently in the DOM.
-  const detailBody = document.querySelector(`[data-detail-body="${cssEscape(id)}"]`);
-  if (detailBody && !logsStreams.has(id)) openLogs(id);
-  if (!detailBody && logsStreams.has(id)) closeLogs(id);
+function insertDetailPlaceholder(id, row) {
+  const tr = document.createElement('tr');
+  tr.className = 'row-detail';
+  tr.dataset.detail = id;
+  tr.innerHTML = `<td colspan="9"><div class="detail-inner" data-detail-body="${api.esc(id)}">loading...</div></td>`;
+  if (row) row.after(tr);
+}
+
+function setCaret(row, open) {
+  if (!row) return;
+  const caret = row.querySelector('.expand-caret');
+  if (caret) { caret.classList.toggle('open', open); caret.innerHTML = open ? '&#9662;' : '&#9656;'; }
 }
 
 function openLogs(id) {
   if (logsStreams.has(id)) return;
-  const entry = { paused: false, buffer: [] };
+  // Cache the `pre` element; the detail node is preserved across ticks, so the
+  // ref stays valid and the SSE callback avoids a per-line DOM query.
+  const pre = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"] [data-logs-pre]`);
+  const entry = { paused: false, buffer: [], pre };
+  const root = document.querySelector(`[data-logs="${api.cssEscape(id)}"]`);
+  if (root) {
+    root.querySelector('[data-logs-toggle]')?.addEventListener('click', (e) => {
+      entry.paused = !entry.paused;
+      e.target.textContent = entry.paused ? 'Resume' : 'Pause';
+    });
+    root.querySelector('[data-logs-clear]')?.addEventListener('click', () => {
+      entry.buffer = [];
+      if (entry.pre) entry.pre.textContent = '';
+    });
+  }
   entry.handle = api.openLogs(
     id,
     (line) => {
       if (entry.paused) return;
       entry.buffer.push(line);
       if (entry.buffer.length > 1000) entry.buffer.shift();
-      const pre = document.querySelector(`[data-detail-body="${cssEscape(id)}"] [data-logs-pre]`);
-      if (pre) { pre.textContent = entry.buffer.join('\n'); pre.scrollTop = pre.scrollHeight; }
+      if (entry.pre) { entry.pre.textContent = entry.buffer.join('\n'); entry.pre.scrollTop = entry.pre.scrollHeight; }
     },
     null
   );
   logsStreams.set(id, entry);
-  // Wire pause/clear on the freshly rendered controls.
-  setTimeout(() => {
-    const root = document.querySelector(`[data-logs="${cssEscape(id)}"]`);
-    if (!root) return;
-    root.querySelector('[data-logs-toggle]').addEventListener('click', (e) => {
-      entry.paused = !entry.paused;
-      e.target.textContent = entry.paused ? 'Resume' : 'Pause';
-    });
-    root.querySelector('[data-logs-clear]').addEventListener('click', () => {
-      entry.buffer = [];
-      const pre = root.querySelector('[data-logs-pre]');
-      if (pre) pre.textContent = '';
-    });
-  }, 0);
 }
 
 function closeLogs(id) {
@@ -165,16 +176,20 @@ function closeLogs(id) {
 
 // ---------- optimistic actions ----------
 
+const ACTIONS = {
+  'builder-start': () => api.startBuilder(),
+  'builder-stop':  () => api.stopBuilder(),
+  stop:  (id) => api.stopContainer(id),
+  start: (id) => api.startContainer(id),
+  kill:  (id) => api.killContainer(id),
+};
+
 async function act(kind, id) {
   const btn = findActionBtn(kind, id);
   const prev = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
-    if (kind === 'builder-start') await api.startBuilder();
-    else if (kind === 'builder-stop') await api.stopBuilder();
-    else if (kind === 'stop' && id) await api.stopContainer(id);
-    else if (kind === 'start' && id) await api.startContainer(id);
-    else if (kind === 'kill' && id) await api.killContainer(id);
+    await ACTIONS[kind]?.(id);
     await poll(true);   // confirm with a fresh payload
   } catch (err) {
     flashError(btn, prev, err.message);
@@ -185,7 +200,7 @@ async function act(kind, id) {
 
 function findActionBtn(kind, id) {
   if (kind.startsWith('builder')) return $(kind);
-  const cell = document.querySelector(`[data-actions="${cssEscape(id)}"]`);
+  const cell = document.querySelector(`[data-actions="${api.cssEscape(id)}"]`);
   return cell ? cell.querySelector(`[data-act="${kind}"]`) : null;
 }
 
@@ -262,16 +277,17 @@ async function loadAdvanced() {
   if (!$('advanced-toggle').parentElement.open) return;
   $('advanced-properties').textContent = 'loading...';
   $('advanced-dns').textContent = 'loading...';
-  try { $('advanced-properties').textContent = JSON.stringify(await api.fetchJson('/api/system/properties'), null, 2); }
-  catch (e) { $('advanced-properties').textContent = `unavailable: ${e.message}`; }
-  try { $('advanced-dns').textContent = JSON.stringify(await api.fetchJson('/api/system/dns'), null, 2); }
-  catch (e) { $('advanced-dns').textContent = `unavailable: ${e.message}`; }
+  const fmt = (j) => JSON.stringify(j, null, 2);
+  const safe = (p) => p.then(fmt).catch((e) => `unavailable: ${e.message}`);
+  const [props, dns] = await Promise.all([
+    safe(api.fetchJson('/api/system/properties')),
+    safe(api.fetchJson('/api/system/dns')),
+  ]);
+  $('advanced-properties').textContent = props;
+  $('advanced-dns').textContent = dns;
 }
 
 // ---------- misc ----------
-
-function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c); }
 
 let toastTimer = null;
 function toast(msg) {
