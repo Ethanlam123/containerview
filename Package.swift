@@ -17,5 +17,11 @@ let package = Package(
             ],
             path: "Sources/ContainerDashboard"
         ),
+        .testTarget(
+            name: "ContainerDashboardTests",
+            dependencies: [.target(name: "ContainerDashboard")],
+            path: "Tests/ContainerDashboardTests",
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )

@@ -1,0 +1,59 @@
+[
+  {
+    "configuration" : {
+      "creationDate" : "2026-03-23T21:34:00Z",
+      "descriptor" : {
+        "digest" : "sha256:96498ffd522e70807ab6384a5c0485a79b9c7c08ca79ba08623edcad1054e62d",
+        "mediaType" : "application\/vnd.oci.image.index.v1+json",
+        "size" : 12212
+      },
+      "name" : "docker.io\/library\/hello-world:latest"
+    },
+    "id" : "96498ffd522e70807ab6384a5c0485a79b9c7c08ca79ba08623edcad1054e62d",
+    "variants" : [
+      {
+        "config" : {
+          "architecture" : "arm64",
+          "config" : {
+            "Cmd" : [
+              "\/hello"
+            ],
+            "Env" : [
+              "PATH=\/usr\/local\/sbin:\/usr\/local\/bin:\/usr\/sbin:\/usr\/bin:\/sbin:\/bin"
+            ],
+            "WorkingDir" : "\/"
+          },
+          "created" : "2026-03-23T21:34:00.012553343Z",
+          "history" : [
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-03-23T21:34:00.012553343Z",
+              "created_by" : "COPY hello \/ # buildkit"
+            },
+            {
+              "comment" : "buildkit.dockerfile.v0",
+              "created" : "2026-03-23T21:34:00.012553343Z",
+              "created_by" : "CMD [\"\/hello\"]",
+              "empty_layer" : true
+            }
+          ],
+          "os" : "linux",
+          "rootfs" : {
+            "diff_ids" : [
+              "sha256:f8975ecc6f0e7f1d7a047a95402220019d4fbf9edd08161c256cf2d4f73009e4"
+            ],
+            "type" : "layers"
+          },
+          "variant" : "v8"
+        },
+        "digest" : "sha256:5099b89d7666cc2186cad769ddc262ddc7c335b33f5fe79f9ffe50a01282b23e",
+        "platform" : {
+          "architecture" : "arm64",
+          "os" : "linux",
+          "variant" : "v8"
+        },
+        "size" : 4768
+      }
+    ]
+  }
+]
