@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Container - Monitor</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path d="M12 2 3 6v12l9 4 9-4V6l-9-4Zm0 2.3 6.5 2.9L12 10 5.5 7.2 12 4.3ZM5 9l6 2.7v7.6L5 16.5V9Zm14 0v7.5l-6 2.8V11.7L19 9Z" fill="currentColor"/>
+      </svg>
+      <h1>Container <span class="dim">-</span> Monitor</h1>
+    </div>
+    <div class="topbar-right">
+      <span id="status-badge" class="badge badge-unknown" title="container system status">
+        <span class="dot"></span><span class="label">Checking</span>
+      </span>
+      <span id="poll-dot" class="poll-dot" aria-hidden="true"></span>
+      <label class="auto-refresh">
+        <input id="auto-toggle" type="checkbox" checked />
+        <span>Auto</span>
+      </label>
+      <label class="interval">
+        <input id="interval-input" type="number" min="1" max="60" value="5" />
+        <span>s</span>
+      </label>
+      <button id="refresh-btn" class="btn" title="Refresh now">Refresh</button>
+      <span id="last-refresh" class="last-refresh dim">never</span>
+    </div>
+  </header>
+
+  <div id="error-banner" class="banner banner-error hidden"></div>
+  <div id="warnings-banner" class="banner banner-warn hidden"></div>
+
+  <main class="grid">
+    <!-- 1. Containers -->
+    <section class="panel panel-containers" aria-labelledby="h-containers">
+      <header class="panel-head"><h2 id="h-containers">Containers</h2><span id="containers-count" class="count"></span></header>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th></th><th>Name</th><th>Image</th><th>Status</th><th>IP</th><th class="num">CPU</th><th class="num">Memory</th><th>Arch</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="containers-tbody"></tbody>
+        </table>
+      </div>
+      <p id="containers-empty" class="empty hidden">No containers. Run <code>container run ...</code> to get started.</p>
+    </section>
+
+    <!-- 2. Resource Overview -->
+    <section class="panel panel-resource" aria-labelledby="h-resource">
+      <header class="panel-head"><h2 id="h-resource">Resource Overview</h2></header>
+      <div class="stat-cards">
+        <div class="stat-card"><div class="stat-label">Containers</div><div id="res-containers" class="stat-value">-</div></div>
+        <div class="stat-card"><div class="stat-label">Memory Allocated</div><div id="res-memory" class="stat-value">-</div></div>
+        <div class="stat-card"><div class="stat-label">Networks</div><div id="res-networks" class="stat-value">-</div></div>
+      </div>
+      <div class="spark-block">
+        <div class="spark-row">
+          <span class="spark-label">CPU</span>
+          <svg id="spark-cpu" class="spark" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline points="" /></svg>
+          <span id="spark-cpu-val" class="spark-val">0%</span>
+        </div>
+        <div class="spark-row">
+          <span class="spark-label">Mem</span>
+          <svg id="spark-mem" class="spark" viewBox="0 0 100 24" preserveAspectRatio="none"><polyline points="" /></svg>
+          <span id="spark-mem-val" class="spark-val">0 B</span>
+        </div>
+        <p class="hint" title="cpuPercent summed across running containers; a 4-CPU container at saturation contributes ~400%.">aggregated across running containers</p>
+      </div>
+    </section>
+
+    <!-- 3. Builder -->
+    <section class="panel panel-builder" aria-labelledby="h-builder">
+      <header class="panel-head">
+        <h2 id="h-builder">Builder</h2>
+        <div class="panel-actions">
+          <button id="builder-start" class="btn btn-ghost">Start</button>
+          <button id="builder-stop" class="btn btn-ghost">Stop</button>
+        </div>
+      </header>
+      <div id="builder-body" class="builder-body">
+        <div class="kv"><span class="k">State</span><span id="builder-state" class="pill">unknown</span></div>
+        <div class="kv"><span class="k">CPUs</span><span id="builder-cpus">-</span></div>
+        <div class="kv"><span class="k">Memory</span><span id="builder-memory">-</span></div>
+        <div class="kv"><span class="k">Container</span><code id="builder-id">-</code></div>
+      </div>
+    </section>
+
+    <!-- 4. Disk Usage -->
+    <section class="panel panel-disk" aria-labelledby="h-disk">
+      <header class="panel-head"><h2 id="h-disk">Disk Usage</h2></header>
+      <div id="disk-rows" class="disk-rows"></div>
+    </section>
+
+    <!-- 5. Images -->
+    <section class="panel panel-images" aria-labelledby="h-images">
+      <header class="panel-head">
+        <h2 id="h-images">Images</h2>
+        <input id="image-search" class="search" type="search" placeholder="filter" />
+      </header>
+      <div class="storage-bar"><div id="images-storage-fill" class="storage-fill"></div></div>
+      <div id="images-grid" class="card-grid"></div>
+      <p id="images-empty" class="empty hidden">No images. <code>container image pull ...</code></p>
+    </section>
+
+    <!-- 6. Machines -->
+    <section class="panel panel-machines" aria-labelledby="h-machines">
+      <header class="panel-head"><h2 id="h-machines">Container Machines</h2></header>
+      <div id="machines-list" class="card-list"></div>
+      <p id="machines-empty" class="empty">No machines. Try <code>container machine create alpine:3.22 --name dev</code></p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-cols">
+      <div>
+        <span class="dim">CLI</span> <span id="footer-cli">-</span>
+      </div>
+      <div>
+        <span class="dim">API server</span> <span id="footer-apiserver">-</span>
+      </div>
+      <div>
+        <span class="dim">macOS</span> <span id="footer-macos">-</span>
+      </div>
+      <div>
+        <span class="dim">Build</span> <span id="footer-build">-</span>
+      </div>
+    </div>
+    <div class="footer-cols">
+      <details class="advanced">
+        <summary id="advanced-toggle">Advanced</summary>
+        <div class="advanced-body">
+          <h3>System Properties</h3>
+          <pre id="advanced-properties" class="pre-block">hidden</pre>
+          <h3>DNS Domains</h3>
+          <pre id="advanced-dns" class="pre-block">hidden</pre>
+        </div>
+      </details>
+      <a class="footer-link" href="https://github.com/apple/container" target="_blank" rel="noopener">apple/container</a>
+    </div>
+  </footer>
+
+  <!-- Image inspect modal -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <h2 id="modal-title">Image</h2>
+        <button id="modal-close" class="btn btn-ghost" aria-label="Close">x</button>
+      </header>
+      <pre id="modal-body" class="pre-block"></pre>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
