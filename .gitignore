@@ -1,0 +1,16 @@
+# Swift Package Manager build output
+.build/
+
+# SwiftPM/Xcode caches
+.swiftpm/
+DerivedData/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Note: Package.resolved IS committed for applications (locks dependency versions)
