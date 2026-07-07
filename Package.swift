@@ -19,7 +19,11 @@ let package = Package(
         ),
         .testTarget(
             name: "ContainerDashboardTests",
-            dependencies: [.target(name: "ContainerDashboard")],
+            dependencies: [
+                .target(name: "ContainerDashboard"),
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "XCTVapor", package: "vapor"),
+            ],
             path: "Tests/ContainerDashboardTests",
             resources: [.copy("Fixtures")]
         ),

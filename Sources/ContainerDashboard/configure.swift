@@ -1,13 +1,11 @@
 import Vapor
 
-/// Route + middleware registration. Fills out across phases.
+/// Middleware + service wiring. The cache-decorated runner and the shared
+/// StatsTracker are constructed once and threaded into route registration.
 public func configure(_ app: Application) throws {
-    try routes(app)
-}
-
-/// Smoke route replaced by static-file serving in Phase 7/9.
-public func routes(_ app: Application) throws {
-    app.get { _ in
-        "Container Dashboard - scaffold OK"
-    }
+    app.middleware.use(OriginGuardMiddleware())
+    // FileMiddleware (static assets) is added in Phase 9 once Resources/Public exists.
+    let runner: any CommandRunner = ResultCache(inner: ProcessCommandRunner())
+    let tracker = StatsTracker()
+    registerRoutes(app, runner: runner, tracker: tracker)
 }

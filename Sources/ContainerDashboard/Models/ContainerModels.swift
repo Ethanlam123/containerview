@@ -1,11 +1,12 @@
 import Foundation
+import Vapor
 
 /// `container ls --format json --all` and `container inspect <id>` (same shape; an array).
 ///
 /// Modeled against the captured fixture (2026-07-07), which is the ground truth
 /// where it diverges from the prose spec: `image.reference` is a sibling of
 /// `descriptor`, not nested inside it.
-struct ContainerList: Codable, Sendable {
+struct ContainerList: Content, Sendable {
     let id: String
     let configuration: Configuration
     let status: Status

@@ -1,10 +1,11 @@
 import Foundation
+import Vapor
 
 /// `container image list --format json` and `container image inspect <name>`
 /// (same shape; inspect returns an array). The Images panel uses
 /// `configuration.name` (the `name:tag` reference), `configuration.creationDate`,
 /// and the arm64 variant for OS/arch + size.
-struct ImageList: Codable, Sendable {
+struct ImageList: Content, Sendable {
     let id: String
     let configuration: Configuration
     let variants: [Variant]

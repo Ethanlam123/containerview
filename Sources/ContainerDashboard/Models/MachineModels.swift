@@ -1,10 +1,11 @@
 import Foundation
+import Vapor
 
 /// `container machine ls --format json` / `machine inspect <id>`. The live
 /// system returned `[]` for both, so the shape is unknown. Fields are filled in
 /// during the Phase 11 capture against a real machine; until then this struct
 /// decodes the empty-array case and degrades gracefully.
-struct MachineList: Codable, Sendable {
+struct MachineList: Content, Sendable {
     let id: String?
     let configuration: Configuration?
     let status: Status?
