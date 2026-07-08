@@ -33,52 +33,77 @@ enum CLIError: Error, Equatable, Sendable {
 
 /// Production runner backed by `Foundation.Process`.
 ///
-/// Swift 6 note: `Process` is not `Sendable`. `run` keeps the `Process` as a
-/// function-local used linearly across awaits (permitted by region-based
-/// isolation); `stream` constructs the `Process` *inside* the read-loop `Task`
-/// so it never crosses a concurrency domain. No stored `Process` state.
+/// Swift 6 note: `Process` is not `Sendable`. Both `run` and `stream` construct
+/// and drive the `Process` entirely inside a `DispatchQueue.global().async`
+/// closure (bridged to async via a continuation / `AsyncThrowingStream`), so the
+/// non-Sendable `Process` is created, used, and torn down on one GCD thread and
+/// never crosses a concurrency domain. No stored `Process` state. Keeping the
+/// blocking lifecycle off Swift's cooperative thread pool is what lets the
+/// server keep accepting requests under concurrent CLI load.
 struct ProcessCommandRunner: CommandRunner {
     func run(binary: String, args: [String], timeout: Duration) async throws -> Data {
         guard let resolved = Self.resolve(binary) else { throw CLIError.missing }
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: resolved)
-        proc.arguments = args
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        do {
-            try proc.run()
-        } catch {
-            throw CLIError.missing
-        }
-        let deadline = ContinuousClock().now.advanced(by: timeout)
-        while proc.isRunning {
-            if ContinuousClock().now >= deadline {
-                proc.terminate()
+        // Run the blocking Process lifecycle on a GCD thread, not the
+        // cooperative pool. `waitUntilExit` / `readDataToEndOfFile` / the poll
+        // are blocking; on the cooperative pool they parked every thread under
+        // the /api/state fan-out when the container daemon was contended (a
+        // thread sample showed all pool threads stacked in
+        // -[NSConcreteTask waitUntilExit], and the server stopped accepting).
+        // GCD is built for blocking work; the continuation resumes the async
+        // caller without holding a cooperative thread.
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: resolved)
+                proc.arguments = args
+                let stdout = Pipe()
+                let stderr = Pipe()
+                proc.standardOutput = stdout
+                proc.standardError = stderr
+                do {
+                    try proc.run()
+                } catch {
+                    cont.resume(throwing: CLIError.missing)
+                    return
+                }
+                let deadline = ContinuousClock().now.advanced(by: timeout)
+                while proc.isRunning, ContinuousClock().now < deadline {
+                    Thread.sleep(forTimeInterval: 0.02)
+                }
+                if proc.isRunning {
+                    // SIGKILL (unignorable) so waitUntilExit can't hang on a
+                    // child that stonewalls SIGTERM - that hang was the wedge.
+                    kill(proc.processIdentifier, SIGKILL)
+                    proc.waitUntilExit()
+                    cont.resume(throwing: CLIError.timedOut)
+                    return
+                }
                 proc.waitUntilExit()
-                throw CLIError.timedOut
+                let data = stdout.fileHandleForReading.readDataToEndOfFile()
+                if proc.terminationStatus != 0 {
+                    cont.resume(throwing: CLIError.nonZeroExit(Int(proc.terminationStatus)))
+                } else {
+                    cont.resume(returning: data)
+                }
             }
-            try await Task.sleep(for: .milliseconds(20))
         }
-        proc.waitUntilExit()
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        if proc.terminationStatus != 0 {
-            throw CLIError.nonZeroExit(Int(proc.terminationStatus))
-        }
-        return data
     }
 
     func stream(binary: String, args: [String]) -> LogStream {
-        // Boxed task reference so the returned `cancel` can reach the producer.
-        final class ProducerTaskBox: @unchecked Sendable {
-            private let lock = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
-            func set(_ task: Task<Void, Never>) { lock.withLock { $0 = task } }
-            func cancel() { lock.withLock { $0?.cancel() } }
-        }
-        let box = ProducerTaskBox()
+        // Cancellation flag: the read loop below runs on a GCD thread (not a
+        // Task), so there is no Task to cancel; this bridges `cancel()` /
+        // `onTermination` into the loop.
+        let cancelled = OSAllocatedUnfairLock<Bool>(initialState: false)
         let lines = AsyncThrowingStream<String, Error> { continuation in
-            let task = Task {
+            // Run the blocking read loop on a background dispatch queue, NOT a
+            // cooperative-pool Task. `poll()` and `reap()` are blocking; on the
+            // cooperative pool they starved HTTP/SSE handling under concurrent
+            // streams (server stopped accepting connections, SSE task groups
+            // never tore down, `container logs -f` children orphaned). GCD is
+            // built for blocking work, and the cooperative tasks awaiting the
+            // next yielded line suspend - holding no thread - so the pool that
+            // serves HTTP stays free. Do not move this back onto a Task.
+            DispatchQueue.global(qos: .userInitiated).async {
                 guard let resolved = Self.resolve(binary) else {
                     continuation.finish(throwing: CLIError.missing)
                     return
@@ -96,17 +121,17 @@ struct ProcessCommandRunner: CommandRunner {
                 }
 
                 // Interruptible read loop. `availableData` blocks until data or
-                // EOF, so it would ignore task cancellation entirely; instead we
-                // `poll()` on the stdout fd with a short timeout and re-check
-                // `Task.isCancelled` each iteration. This bounds the time
-                // between a cancel and reaping the child.
+                // EOF, so it would never observe `cancel()`; instead `poll()`
+                // gates each read with a short timeout and we re-check the
+                // cancellation flag every iteration. This bounds the time
+                // between a cancel and reaping the child to ~250ms.
                 let fd = stdout.fileHandleForReading.fileDescriptor
                 let handle = stdout.fileHandleForReading
                 var carry = Data()
-                while !Task.isCancelled {
+                while !(cancelled.withLock({ $0 })) {
                     var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
                     let rc = poll(&pfd, 1, 250)
-                    if Task.isCancelled { break }
+                    if cancelled.withLock({ $0 }) { break }
                     if rc <= 0 { continue } // timeout or interrupted; loop and re-check
                     let chunk = handle.availableData
                     if chunk.isEmpty {
@@ -130,10 +155,9 @@ struct ProcessCommandRunner: CommandRunner {
                 Self.reap(proc)
                 continuation.finish()
             }
-            box.set(task)
-            continuation.onTermination = { _ in box.cancel() }
+            continuation.onTermination = { _ in cancelled.withLock { $0 = true } }
         }
-        return LogStream(lines: lines, cancel: { box.cancel() })
+        return LogStream(lines: lines, cancel: { cancelled.withLock { $0 = true } })
     }
 
     /// SIGTERM, a 2s grace, then SIGKILL; finally reap. `container logs -f` is

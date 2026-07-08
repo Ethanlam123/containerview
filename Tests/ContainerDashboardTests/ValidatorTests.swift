@@ -77,3 +77,57 @@ func v13_invalid_image_refs(_ s: String) {
     // A macOS product version has at least two dot-separated components.
     #expect((v?.split(separator: ".").count ?? 0) >= 2)
 }
+
+// MARK: - Process runner streaming (real process)
+
+// `stream()` must yield stdout lines as they arrive (not one-shot capture) and
+// stop promptly on `cancel()`. We test the generic runner directly with /bin/sh;
+// this is a test-only shell string with no user input, so the "argument arrays
+// only" security rule (which protects user-supplied :id from reaching a shell)
+// does not apply here.
+
+@Test func processRunner_stream_yields_lines() async throws {
+    let runner = ProcessCommandRunner()
+    let handle = runner.stream(binary: "/bin/sh", args: ["-c", "echo a; printf b; sleep 0.1; echo c"])
+    var got: [String] = []
+    for try await line in handle.lines { got.append(line) }
+    // "b" has no trailing newline, so it joins the next line into "bc".
+    #expect(got == ["a", "bc"])
+}
+
+@Test func processRunner_stream_cancel_stops_promptly() async throws {
+    let runner = ProcessCommandRunner()
+    // `exec` replaces the shell with `sleep`, so the one PID we reap IS sleep;
+    // no orphaned child lingers after cancel.
+    let handle = runner.stream(binary: "/bin/sh", args: ["-c", "echo a; exec sleep 30"])
+    var got: [String] = []
+    let elapsed = try await ContinuousClock().measure {
+        for try await line in handle.lines {
+            got.append(line)
+            if got.count == 1 { handle.cancel() }
+        }
+    }
+    #expect(got == ["a"])
+    // poll() returns within ~250ms; reap tears down on SIGTERM well inside the
+    // 2s grace. Assert headroom so a healthy cancel path fails loudly, not the
+    // 30s no-cancel case.
+    #expect(elapsed < .seconds(2))
+}
+
+@Test func processRunner_run_timeout_sigkills_promptly() async throws {
+    let runner = ProcessCommandRunner()
+    // A child that ignores SIGTERM (trap '') would hang the old waitUntilExit
+    // indefinitely; the SIGKILL escalation must still bound it to ~timeout.
+    let elapsed = try await ContinuousClock().measure {
+        await #expect(throws: CLIError.timedOut) {
+            try await runner.run(
+                binary: "/bin/sh",
+                args: ["-c", "trap '' TERM; sleep 30"],
+                timeout: .seconds(1)
+            )
+        }
+    }
+    // 1s timeout + 20ms poll granularity + SIGKILL reaping. Far under the 30s
+    // a stonewalling child would otherwise cost.
+    #expect(elapsed < .seconds(3))
+}
