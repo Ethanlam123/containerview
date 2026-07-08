@@ -242,6 +242,7 @@ code, pre, .mono { font-family: var(--mono); }
 .image-name { font-family: var(--mono); font-size: 13px; word-break: break-all; }
 .image-meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: var(--dim); }
 .search { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; color: var(--text); font-family: inherit; font-size: 12px; width: 130px; }
+.pull-form { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* ---------- machines ---------- */
 .card-list { display: flex; flex-direction: column; gap: 10px; }

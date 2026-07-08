@@ -109,7 +109,14 @@
     <section class="panel panel-images" aria-labelledby="h-images">
       <header class="panel-head">
         <h2 id="h-images">Images</h2>
-        <input id="image-search" class="search" type="search" placeholder="filter" />
+        <div class="panel-actions images-actions">
+          <form id="pull-form" class="pull-form">
+            <input id="pull-reference" class="search" type="text" name="reference" placeholder="alpine:latest" aria-label="Image reference to pull" />
+            <button type="submit" class="btn btn-sm" id="pull-submit">Pull</button>
+            <span id="pull-error" class="row-error"></span>
+          </form>
+          <input id="image-search" class="search" type="search" placeholder="filter" />
+        </div>
       </header>
       <div class="storage-bar"><div id="images-storage-fill" class="storage-fill"></div></div>
       <div id="images-grid" class="card-grid"></div>

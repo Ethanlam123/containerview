@@ -15,6 +15,7 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         var errors: [String: CLIError] = [:]
         var streams: [String: [String]] = [:]
         var calls: [(binary: String, args: [String])] = []
+        var discardingCalls: [(binary: String, args: [String])] = []
     }
     private let store = OSAllocatedUnfairLock(initialState: Store())
 
@@ -34,6 +35,12 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         store.withLock { $0.calls }
     }
 
+    /// Calls to `runDiscardingOutput` (kept separate from `calls` so tests can
+    /// prove a command took the discarding path, not the capturing `run` path).
+    var discardingCalls: [(binary: String, args: [String])] {
+        store.withLock { $0.discardingCalls }
+    }
+
     static func key(_ binary: String, _ args: [String]) -> String {
         "\(binary) \(args.joined(separator: " "))"
     }
@@ -47,6 +54,18 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         if let err { throw err }
         guard let data else { throw CLIError.missing }
         return data
+    }
+
+    func runDiscardingOutput(binary: String, args: [String], timeout: Duration) async throws {
+        let k = Self.key(binary, args)
+        let (err, hasData) = store.withLock { s -> (CLIError?, Bool) in
+            s.discardingCalls.append((binary, args))
+            return (s.errors[k], s.bytes[k] != nil)
+        }
+        if let err { throw err }
+        // The real runner discards output; the fake just needs to not throw when
+        // bytes were planted (proving the call was accepted).
+        guard hasData else { throw CLIError.missing }
     }
 
     func stream(binary: String, args: [String]) -> LogStream {

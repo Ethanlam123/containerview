@@ -14,6 +14,12 @@ protocol CommandRunner: Sendable {
     /// use this so a repeated call within the cache TTL is not short-circuited
     /// into a cached no-op (a latent double-click dedupe bug fixed in phase 13).
     func runUncached(binary: String, args: [String], timeout: Duration) async throws -> Data
+    /// One-shot, side-effecting, output discarded to `/dev/null`. For commands
+    /// whose progress would overflow a `Pipe` buffer (~64 KB) and block the child
+    /// on `write()` - `container image pull` does this, which would hold
+    /// `isRunning` true until our timeout SIGKILLs a pull that actually finished.
+    /// Never deduped (side-effecting) and returns no bytes by design.
+    func runDiscardingOutput(binary: String, args: [String], timeout: Duration) async throws
     /// Streaming: yield stdout lines as they arrive (for `container logs -f`),
     /// with an explicit `cancel` for teardown. The caller MUST invoke `cancel`
     /// when it stops iterating (e.g. on client disconnect) so the child process
@@ -26,6 +32,12 @@ extension CommandRunner {
     /// `ResultCache` overrides to delegate past its map.
     func runUncached(binary: String, args: [String], timeout: Duration) async throws -> Data {
         try await run(binary: binary, args: args, timeout: timeout)
+    }
+
+    /// Default: run uncached and drop the bytes. `ProcessCommandRunner` overrides
+    /// to sink to `/dev/null` (the whole point - avoid the pipe-buffer hang).
+    func runDiscardingOutput(binary: String, args: [String], timeout: Duration) async throws {
+        _ = try await runUncached(binary: binary, args: args, timeout: timeout)
     }
 }
 
@@ -98,6 +110,54 @@ struct ProcessCommandRunner: CommandRunner {
                     cont.resume(throwing: CLIError.nonZeroExit(Int(proc.terminationStatus)))
                 } else {
                     cont.resume(returning: data)
+                }
+            }
+        }
+    }
+
+    func runDiscardingOutput(binary: String, args: [String], timeout: Duration) async throws {
+        guard let resolved = Self.resolve(binary) else { throw CLIError.missing }
+        // Same blocking lifecycle as `run()` (GCD, not the cooperative pool) but
+        // stdout/stderr sink to `/dev/null` instead of a `Pipe`. A `Pipe` would
+        // fill its ~64 KB buffer on `container image pull`'s progress and block
+        // the child on `write()`, holding `isRunning` true until our timeout
+        // SIGKILLed a pull that had actually finished. `/dev/null` never blocks.
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: resolved)
+                proc.arguments = args
+                let devnull = open("/dev/null", O_WRONLY)
+                if devnull >= 0 {
+                    // Two handles over one fd; closeOnDealloc false so we own the
+                    // single close below.
+                    proc.standardOutput = FileHandle(fileDescriptor: devnull, closeOnDealloc: false)
+                    proc.standardError = FileHandle(fileDescriptor: devnull, closeOnDealloc: false)
+                }
+                do {
+                    try proc.run()
+                } catch {
+                    if devnull >= 0 { close(devnull) }
+                    cont.resume(throwing: CLIError.missing)
+                    return
+                }
+                let deadline = ContinuousClock().now.advanced(by: timeout)
+                while proc.isRunning, ContinuousClock().now < deadline {
+                    Thread.sleep(forTimeInterval: 0.02)
+                }
+                if proc.isRunning {
+                    kill(proc.processIdentifier, SIGKILL)
+                    proc.waitUntilExit()
+                    if devnull >= 0 { close(devnull) }
+                    cont.resume(throwing: CLIError.timedOut)
+                    return
+                }
+                proc.waitUntilExit()
+                if devnull >= 0 { close(devnull) }
+                if proc.terminationStatus != 0 {
+                    cont.resume(throwing: CLIError.nonZeroExit(Int(proc.terminationStatus)))
+                } else {
+                    cont.resume(returning: ())
                 }
             }
         }

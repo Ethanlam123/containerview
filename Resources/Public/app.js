@@ -361,6 +361,36 @@ async function onCreateSubmit(e) {
   }
 }
 
+// ---------- pull image ----------
+
+// The server validates the ref and discards output (pull progress would
+// overflow the pipe buffer); it returns a fixed label on 4xx/5xx (never the
+// ref). Fire-to-completion, so the button stays "Pulling..." until it resolves.
+$('pull-form').addEventListener('submit', onPullSubmit);
+
+async function onPullSubmit(e) {
+  e.preventDefault();
+  const input = $('pull-reference');
+  const ref = (input.value || '').trim();
+  const errEl = $('pull-error');
+  errEl.textContent = '';
+  if (!ref) return;
+  const btn = $('pull-submit');
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Pulling...';
+  try {
+    await api.pullImage(ref);
+    input.value = '';
+    await poll(true);   // confirm the new image appears in the grid
+  } catch (err) {
+    errEl.textContent = err.message || 'pull failed';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+}
+
 // ---------- advanced disclosure ----------
 
 async function loadAdvanced() {

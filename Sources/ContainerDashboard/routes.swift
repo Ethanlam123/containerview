@@ -72,6 +72,25 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
         }
     }
 
+    // Pull an image by reference. The ref is validated at the boundary
+    // (ImageRefValidator); pull runs uncached + output-discarding (its progress
+    // would overflow a pipe buffer). 202 on success; generic error on failure
+    // (CLI output may carry the ref and is not reflected back).
+    app.post("api", "images", "pull") { req async throws -> Response in
+        let body: ImagePullRequest
+        do { body = try req.content.decode(ImagePullRequest.self) }
+        catch { throw Abort(.badRequest, reason: "invalid pull request") }
+        guard ImageRefValidator.validate(body.reference) else {
+            throw Abort(.badRequest, reason: "invalid image reference")
+        }
+        do {
+            try await ContainerCLI.imagePull(runner, ref: body.reference)
+            return Response(status: .accepted)
+        } catch {
+            throw Abort(.internalServerError, reason: "image pull failed")
+        }
+    }
+
     // MARK: Builder
 
     app.post("api", "builder", "start") { _ async throws -> Response in
@@ -130,4 +149,9 @@ private func passthrough(_ data: () async throws -> Data) async throws -> Respon
 /// `POST /api/containers/run` success body: the new container id.
 private struct RunResponse: Codable {
     let id: String
+}
+
+/// `POST /api/images/pull` body. The reference is validated after decoding.
+private struct ImagePullRequest: Codable {
+    let reference: String
 }

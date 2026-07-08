@@ -91,6 +91,14 @@ enum ContainerCLI {
     static func builderStart(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "start"]) }
     static func builderStop(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "stop"]) }
 
+    /// `container image pull <ref>` - uncached (side-effecting) and output-
+    /// discarding (pull emits enough progress to overflow a pipe buffer and hang
+    /// the capturing `run()`). Ref is validated at the HTTP boundary. Fire-to-
+    /// completion with a 600s ceiling; large first pulls can exceed 300s.
+    static func imagePull(_ r: some CommandRunner, ref: String) async throws {
+        try await r.runDiscardingOutput(binary: "container", args: ["image", "pull", ref], timeout: .seconds(600))
+    }
+
     static func prune(_ r: some CommandRunner, category: PruneCategory) async throws {
         _ = try await r.runUncached(binary: "container", args: category.argv, timeout: .seconds(30))
     }

@@ -48,6 +48,22 @@ export const startBuilder    = () => postAction('/api/builder/start');
 export const stopBuilder     = () => postAction('/api/builder/stop');
 export const prune           = (category) => postAction(`/api/prune/${category}`);
 
+/// Pull an image by reference. The server validates the ref and discards output
+/// (pull progress would overflow the pipe buffer); resolves on 2xx, throws with
+/// a generic server-side reason otherwise. Fire-to-completion (may take minutes).
+export async function pullImage(reference) {
+  const res = await fetch('/api/images/pull', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reference }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.reason || `HTTP ${res.status}`);
+  }
+  return true;
+}
+
 /// Lazy `container inspect <id>` for row expansion.
 export async function inspectContainer(id) {
   const res = await fetch(`/api/containers/${encodeURIComponent(id)}`);

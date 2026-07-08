@@ -41,6 +41,12 @@ final class ResultCache: CommandRunner, Sendable {
         try await inner.runUncached(binary: binary, args: args, timeout: timeout)
     }
 
+    /// Side-effecting + output-discarding: bypass the map and delegate to the
+    /// real `/dev/null` sink on the inner runner.
+    func runDiscardingOutput(binary: String, args: [String], timeout: Duration) async throws {
+        try await inner.runDiscardingOutput(binary: binary, args: args, timeout: timeout)
+    }
+
     /// Null-separated so `binary` and each arg can't collide across shapes.
     private static func key(_ binary: String, _ args: [String]) -> String {
         binary + "\u{0}" + args.joined(separator: "\u{0}")
