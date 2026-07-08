@@ -146,3 +146,37 @@ func lifecycle_args(_ label: String, _ verb: String) async throws {
     try await ContainerCLI.prune(f3, category: .volumes)
     #expect(try args(f3) == ["volume", "prune"])
 }
+
+/// `container run` assembles a fixed, server-controlled argv from validated
+/// value types. The cidfile path (index 3) is server-generated, so it is
+/// asserted structurally; every other element is exact. Each validated port/env/
+/// volume lands as a single argv element (the security boundary).
+@Test func run_args_shape() async throws {
+    let json = #"{"image":"alpine","name":"smoke","ports":["8080:80"],"env":["FOO=bar"],"volumes":["/h:/d"],"cpus":2,"memory":"512M","args":["sh","-c","echo hi"],"rm":true}"#
+    let req = try JSONDecoder().decode(ContainerRunRequest.self, from: Data(json.utf8))
+    // run() throws: the fake never writes the cidfile, so the id-read fails. The
+    // call is recorded before that point.
+    let f = FakeCommandRunner()
+    await #expect(throws: (any Error).self) { _ = try await ContainerCLI.run(f, req: req) }
+    let a = try #require(f.calls.last?.args)
+    #expect(f.calls.last?.binary == "container")
+    let expected = ["run", "--detach", "--cidfile", "<path>", "--name", "smoke",
+                    "-p", "127.0.0.1:8080:80/tcp", "-e", "FOO=bar", "-v", "/h:/d",
+                    "-c", "2", "-m", "512M", "--rm", "alpine", "sh", "-c", "echo hi"]
+    #expect(a.count == expected.count)
+    for (i, e) in expected.enumerated() {
+        if i == 3 { #expect(a[i].hasSuffix(".cid"), "cidfile path"); continue }
+        #expect(a[i] == e, "argv[\(i)] expected \(e)")
+    }
+}
+
+/// An absent optional yields no element; only image + args are required-ish.
+@Test func run_args_minimal() async throws {
+    let req = try JSONDecoder().decode(ContainerRunRequest.self, from: Data(#"{"image":"alpine"}"#.utf8))
+    let f = FakeCommandRunner()
+    await #expect(throws: (any Error).self) { _ = try await ContainerCLI.run(f, req: req) }
+    let a = try #require(f.calls.last?.args)
+    #expect(a[0...2] == ["run", "--detach", "--cidfile"])
+    #expect(a[4] == "alpine")   // index 3 is the cidfile path
+    #expect(a.count == 5)
+}

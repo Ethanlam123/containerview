@@ -39,7 +39,13 @@
   <main class="grid">
     <!-- 1. Containers -->
     <section class="panel panel-containers" aria-labelledby="h-containers">
-      <header class="panel-head"><h2 id="h-containers">Containers</h2><span id="containers-count" class="count"></span></header>
+      <header class="panel-head">
+        <h2 id="h-containers">Containers</h2>
+        <div class="panel-actions">
+          <span id="containers-count" class="count"></span>
+          <button id="new-container-btn" class="btn btn-ghost" title="Create + start a container">+ New</button>
+        </div>
+      </header>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -155,6 +161,49 @@
         <button id="modal-close" class="btn btn-ghost" aria-label="Close">x</button>
       </header>
       <pre id="modal-body" class="pre-block"></pre>
+    </div>
+  </div>
+
+  <!-- Create container modal -->
+  <div id="create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="create-title">
+    <div class="modal-card create-card">
+      <header class="modal-head">
+        <h2 id="create-title">New container</h2>
+        <button id="create-close" class="btn btn-ghost" aria-label="Close">x</button>
+      </header>
+      <form id="create-form" class="create-form" autocomplete="off">
+        <label class="field">
+          <span>Image <em class="req">required</em></span>
+          <input name="image" list="image-options" placeholder="alpine:latest" required />
+          <datalist id="image-options"></datalist>
+        </label>
+        <label class="field"><span>Name</span><input name="name" placeholder="my-app" /></label>
+
+        <div class="repeat" data-repeat="ports">
+          <div class="repeat-head"><span class="repeat-label">Ports</span><button type="button" class="btn btn-sm btn-ghost add-row">+ add</button></div>
+          <div class="repeat-rows"><input name="ports" placeholder="8080:80 (binds to 127.0.0.1)" /></div>
+        </div>
+        <div class="repeat" data-repeat="env">
+          <div class="repeat-head"><span class="repeat-label">Env</span><button type="button" class="btn btn-sm btn-ghost add-row">+ add</button></div>
+          <div class="repeat-rows"><input name="env" placeholder="KEY=value" /></div>
+        </div>
+        <div class="repeat" data-repeat="volumes">
+          <div class="repeat-head"><span class="repeat-label">Volumes</span><button type="button" class="btn btn-sm btn-ghost add-row">+ add</button></div>
+          <div class="repeat-rows"><input name="volumes" placeholder="/host/path:/container/path" /></div>
+        </div>
+
+        <div class="field-row">
+          <label class="field"><span>CPUs</span><input name="cpus" type="number" min="1" max="1024" placeholder="2" /></label>
+          <label class="field"><span>Memory</span><input name="memory" placeholder="512M" /></label>
+        </div>
+        <label class="field"><span>Command (args)</span><input name="args" placeholder="sh -c 'echo hi'" /></label>
+        <label class="check"><input type="checkbox" name="rm" /> Remove on stop (<code>--rm</code>)</label>
+
+        <div class="create-foot">
+          <span id="create-error" class="row-error"></span>
+          <button type="submit" class="btn btn-primary" id="create-submit">Create &amp; start</button>
+        </div>
+      </form>
     </div>
   </div>
 

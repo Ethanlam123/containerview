@@ -284,3 +284,27 @@ code, pre, .mono { font-family: var(--mono); }
   .topbar { flex-wrap: wrap; }
   .stat-cards { grid-template-columns: 1fr; }
 }
+
+/* ---------- create container modal ---------- */
+.create-card { max-width: 560px; }
+.create-form { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+.create-form .field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.create-form .field > span { color: var(--dim); }
+.create-form .field > span .req { color: var(--orange); font-style: normal; font-size: 10px; margin-left: 4px; }
+.create-form input[type="text"],
+.create-form input:not([type]) {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 6px 9px; color: var(--text); font-family: var(--mono); font-size: 12px;
+}
+.create-form input:focus { outline: none; border-color: var(--blue); }
+.create-form .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.create-form .repeat .repeat-head { display: flex; align-items: center; justify-content: space-between; }
+.create-form .repeat .repeat-label { color: var(--dim); font-size: 12px; }
+.create-form .repeat .repeat-rows { display: flex; flex-direction: column; gap: 6px; }
+.create-form .repeat-item { display: flex; gap: 6px; align-items: center; }
+.create-form .repeat-item input { flex: 1; }
+.create-form .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.create-form .check input { accent-color: var(--blue); }
+.create-form .check code { font-size: 11px; }
+.create-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.create-foot .row-error { flex: 1; }

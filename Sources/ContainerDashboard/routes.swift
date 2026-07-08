@@ -50,6 +50,26 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
         try await runAction { try await ContainerCLI.kill(runner, id: try validatedID(req)) }
     }
 
+    // Create + start a container from a validated request body. Validation
+    // happens inside `ContainerRunRequest` decoding (each field is a validator-
+    // backed value type); a decode failure is a generic 400 whose body does not
+    // echo the offending value. The CLI error is likewise not reflected back
+    // (it may contain user-supplied image/env values).
+    app.post("api", "containers", "run") { req async throws -> Response in
+        let body: ContainerRunRequest
+        do { body = try req.content.decode(ContainerRunRequest.self) }
+        catch { throw Abort(.badRequest, reason: "invalid run request") }
+        do {
+            let id = try await ContainerCLI.run(runner, req: body)
+            let json = try JSONEncoder().encode(RunResponse(id: id))
+            var headers = HTTPHeaders()
+            headers.add(name: .contentType, value: "application/json")
+            return Response(status: .created, headers: headers, body: Response.Body(data: json))
+        } catch {
+            throw Abort(.internalServerError, reason: "container run failed")
+        }
+    }
+
     // MARK: Builder
 
     app.post("api", "builder", "start") { _ async throws -> Response in
@@ -98,4 +118,9 @@ private func passthrough(_ data: () async throws -> Data) async throws -> Respon
     var headers = HTTPHeaders()
     headers.add(name: .contentType, value: "application/json; charset=utf-8")
     return Response(status: .ok, headers: headers, body: Response.Body(data: bytes))
+}
+
+/// `POST /api/containers/run` success body: the new container id.
+private struct RunResponse: Codable {
+    let id: String
 }

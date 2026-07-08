@@ -37,7 +37,7 @@ $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') close
 document.querySelector('details.advanced')?.addEventListener('toggle', loadAdvanced);
 
 document.addEventListener('visibilitychange', onVisibility);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeModal(); closeCreate(); } });
 
 // Render last-known-good immediately (before first poll resolves) so a stopped
 // system still shows something.
@@ -271,6 +271,108 @@ async function openImageModal(name) {
 
 function closeModal() {
   $('modal').classList.add('hidden');
+}
+
+// ---------- create container ----------
+
+// The server is the validation authority (each field is a validator-backed
+// value type); client checks here are UX hints, not security.
+$('new-container-btn').addEventListener('click', openCreate);
+$('create-close').addEventListener('click', closeCreate);
+$('create-modal').addEventListener('click', (e) => { if (e.target.id === 'create-modal') closeCreate(); });
+document.querySelectorAll('.repeat .add-row').forEach((btn) => {
+  btn.addEventListener('click', () => addRepeatRow(btn.closest('.repeat')));
+});
+$('create-form').addEventListener('submit', onCreateSubmit);
+
+function addRepeatRow(group) {
+  const rows = group.querySelector('.repeat-rows');
+  const proto = rows.querySelector('input');
+  const wrap = document.createElement('div');
+  wrap.className = 'repeat-item';
+  const input = document.createElement('input');
+  input.name = proto.name;
+  input.placeholder = proto.placeholder;
+  wrap.appendChild(input);
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'btn btn-sm btn-ghost btn-danger remove-row';
+  rm.textContent = 'x';
+  rm.addEventListener('click', () => wrap.remove());
+  wrap.appendChild(rm);
+  rows.appendChild(wrap);
+  input.focus();
+}
+
+function openCreate() {
+  const dl = $('image-options');
+  const names = (lastState?.images || []).map((i) => i.configuration?.name).filter(Boolean);
+  dl.innerHTML = names.map((n) => `<option value="${api.esc(n)}"></option>`).join('');
+  $('create-error').textContent = '';
+  $('create-modal').classList.remove('hidden');
+  setTimeout(() => $('create-form').querySelector('input[name="image"]').focus(), 0);
+}
+
+function closeCreate() {
+  $('create-modal').classList.add('hidden');
+}
+
+function gatherCreate() {
+  const form = $('create-form');
+  const val = (n) => (form.querySelector(`input[name="${n}"]`)?.value || '').trim();
+  const arr = (n) => Array.from(form.querySelectorAll(`input[name="${n}"]`))
+    .map((i) => (i.value || '').trim()).filter(Boolean);
+  const body = {
+    image: val('image'),
+    ports: arr('ports'),
+    env: arr('env'),
+    volumes: arr('volumes'),
+    // args are space-separated here (no shell-quote parsing in v1); they land
+    // after `image` as the container init argv.
+    args: val('args') ? val('args').split(/\s+/).filter(Boolean) : [],
+  };
+  const name = val('name'); if (name) body.name = name;
+  const cpus = val('cpus'); if (cpus) body.cpus = Number(cpus);
+  const memory = val('memory'); if (memory) body.memory = memory;
+  if (form.querySelector('input[name="rm"]').checked) body.rm = true;
+  return body;
+}
+
+// Light mirror of the server validators; surfaces format errors before submit.
+function clientValidateCreate(b) {
+  if (!b.image) return 'image is required';
+  if (b.name && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(b.name)) return 'invalid name';
+  if (!/^[A-Za-z0-9][A-Za-z0-9/:._@-]{0,255}$/.test(b.image)) return 'invalid image reference';
+  for (const p of b.ports) if (!/^([\d.]+:)?\d+:\d+(\/(tcp|udp|sctp))?$/i.test(p)) return `invalid port: ${p}`;
+  for (const e of b.env) if (!/^[A-Za-z_][A-Za-z0-9_]*(=.*)?$/.test(e)) return `invalid env: ${e}`;
+  if (b.memory && !/^\d+[KMGTPE]?$/i.test(b.memory)) return `invalid memory: ${b.memory}`;
+  return null;
+}
+
+async function onCreateSubmit(e) {
+  e.preventDefault();
+  const errEl = $('create-error');
+  errEl.textContent = '';
+  const body = gatherCreate();
+  const cerr = clientValidateCreate(body);
+  if (cerr) { errEl.textContent = cerr; return; }
+  const btn = $('create-submit');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+  try {
+    await api.createContainer(body);
+    $('create-form').reset();
+    document.querySelectorAll('.repeat-rows').forEach((r) => {
+      Array.from(r.querySelectorAll('.repeat-item')).forEach((x) => x.remove());
+    });
+    closeCreate();
+    await poll(true);   // confirm the new row appears
+  } catch (err) {
+    errEl.textContent = err.message || 'create failed';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create & start';
+  }
 }
 
 // ---------- advanced disclosure ----------

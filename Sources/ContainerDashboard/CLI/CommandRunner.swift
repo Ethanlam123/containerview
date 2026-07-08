@@ -7,12 +7,26 @@ import os
 /// every CLI call and tests inject a fake.
 protocol CommandRunner: Sendable {
     /// One-shot: run to completion (or timeout), return captured stdout bytes.
+    /// Reads use this (the cache-decorated runner dedupes within a short TTL).
     func run(binary: String, args: [String], timeout: Duration) async throws -> Data
+    /// One-shot, bypassing any dedupe/cache layer. Side-effecting commands
+    /// (`run`, `stop`, `start`, `kill`, `prune`, builder start/stop, `pull`) MUST
+    /// use this so a repeated call within the cache TTL is not short-circuited
+    /// into a cached no-op (a latent double-click dedupe bug fixed in phase 13).
+    func runUncached(binary: String, args: [String], timeout: Duration) async throws -> Data
     /// Streaming: yield stdout lines as they arrive (for `container logs -f`),
     /// with an explicit `cancel` for teardown. The caller MUST invoke `cancel`
     /// when it stops iterating (e.g. on client disconnect) so the child process
     /// is reaped.
     func stream(binary: String, args: [String]) -> LogStream
+}
+
+extension CommandRunner {
+    /// Default: no caching layer below this runner, so uncached == cached.
+    /// `ResultCache` overrides to delegate past its map.
+    func runUncached(binary: String, args: [String], timeout: Duration) async throws -> Data {
+        try await run(binary: binary, args: args, timeout: timeout)
+    }
 }
 
 /// A streaming read handle. `lines` is iterated for output; `cancel` stops the

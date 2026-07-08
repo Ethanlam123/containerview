@@ -25,6 +25,22 @@ export async function postAction(path) {
   return true;
 }
 
+/// Create + start a container from a JSON body. Returns { id }. The server is the
+/// validation authority (each field is a validator-backed value type); on 4xx/5xx
+/// it returns a generic reason that is safe to display (no echoed input).
+export async function createContainer(body) {
+  const res = await fetch('/api/containers/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.reason || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export const stopContainer   = (id) => postAction(`/api/containers/${encodeURIComponent(id)}/stop`);
 export const startContainer  = (id) => postAction(`/api/containers/${encodeURIComponent(id)}/start`);
 export const killContainer   = (id) => postAction(`/api/containers/${encodeURIComponent(id)}/kill`);

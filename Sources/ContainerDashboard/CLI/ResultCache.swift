@@ -35,6 +35,12 @@ final class ResultCache: CommandRunner, Sendable {
         inner.stream(binary: binary, args: args)
     }
 
+    /// Side-effecting callers (writes, run, pull) bypass the dedupe map so a
+    /// repeated call within the TTL is not turned into a cached no-op.
+    func runUncached(binary: String, args: [String], timeout: Duration) async throws -> Data {
+        try await inner.runUncached(binary: binary, args: args, timeout: timeout)
+    }
+
     /// Null-separated so `binary` and each arg can't collide across shapes.
     private static func key(_ binary: String, _ args: [String]) -> String {
         binary + "\u{0}" + args.joined(separator: "\u{0}")
