@@ -11,11 +11,15 @@ import Foundation
 /// after `image` as the container's init argv, so a leading `-` is legitimate.
 ///
 /// Every field below is validated in `init(from:)`; decoding IS validation. A
-/// failure throws `SpecError`, which the route maps to a generic 400 whose body
-/// does not echo the offending value.
+/// failure throws `SpecError`; the route surfaces its reason (a fixed server
+/// label, never the offending value) as a 400.
 
-enum SpecError: Error, Equatable {
+enum SpecError: Error, Equatable, CustomStringConvertible {
     case invalid(String)
+    var description: String {
+        if case .invalid(let r) = self { return r }
+        return "invalid"
+    }
 }
 
 // MARK: - Shared argv guards
@@ -31,21 +35,20 @@ private func assertArgvSafe(_ s: String) throws {
     }
 }
 
+private func wholeMatch(_ s: String, _ pattern: String) -> Bool {
+    guard let r = try? Regex(pattern) else { return false }
+    return s.wholeMatch(of: r) != nil
+}
+
 /// IPv4 dotted-quad host bind (IPv6 host binds are not supported in v1).
 private func assertIPv4(_ s: String) throws {
-    let octets = s.split(separator: ".").compactMap { Int($0) }
-    guard octets.count == 4, s.split(separator: ".").count == 4,
-          octets.allSatisfy({ (0...255).contains($0) }) else {
+    let parts = s.split(separator: ".")
+    guard parts.count == 4, parts.allSatisfy({ (0...255).contains(Int($0) ?? -1) }) else {
         throw SpecError.invalid("host ip")
     }
 }
 
-private func isLoopback(_ s: String) -> Bool { s == "127.0.0.1" || s == "localhost" }
-
-/// When unset, published ports are forced onto 127.0.0.1 and an explicit
-/// non-loopback host bind is rejected - keeping the dashboard's loopback trust
-/// boundary intact.
-private let allowRemoteBind = ProcessInfo.processInfo.environment["CONTAINERDASHBOARD_ALLOW_REMOTE_BIND"] == "1"
+private func isLoopback(_ s: String) -> Bool { s.hasPrefix("127.") }   // 127.0.0.0/8
 
 // MARK: - PortSpec
 
@@ -54,7 +57,10 @@ private let allowRemoteBind = ProcessInfo.processInfo.environment["CONTAINERDASH
 struct PortSpec: Sendable, Equatable, Codable {
     let argv: String
 
-    init(raw: String) throws {
+    /// - Parameter allowRemote: when false (default), force the bind to loopback
+    ///   and reject an explicit non-loopback host-ip. Injectable so the opt-in
+    ///   branch (`CONTAINERDASHBOARD_ALLOW_REMOTE_BIND`) is testable.
+    init(raw: String, allowRemote: Bool = PortSpec.defaultAllowRemote) throws {
         try assertArgvSafe(raw)
         var rest = raw
         var proto = "tcp"
@@ -86,7 +92,7 @@ struct PortSpec: Sendable, Equatable, Codable {
             throw SpecError.invalid("port range")
         }
         let bind = hostIP.isEmpty ? "127.0.0.1" : hostIP
-        if !allowRemoteBind, !isLoopback(bind) {
+        if !allowRemote, !isLoopback(bind) {
             throw SpecError.invalid("remote bind disabled")
         }
         self.argv = "\(bind):\(hostPort):\(containerPort)/\(proto)"
@@ -94,6 +100,9 @@ struct PortSpec: Sendable, Equatable, Codable {
 
     init(from decoder: Decoder) throws { try self.init(raw: try decoder.singleValueContainer().decode(String.self)) }
     func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(argv) }
+
+    /// Default host-bind policy, read once from the environment.
+    static let defaultAllowRemote = ProcessInfo.processInfo.environment["CONTAINERDASHBOARD_ALLOW_REMOTE_BIND"] == "1"
 }
 
 // MARK: - EnvSpec
@@ -110,25 +119,19 @@ struct EnvSpec: Sendable, Equatable, Codable {
         if let eq = raw.firstIndex(of: "=") {
             let key = String(raw[..<eq])
             let val = String(raw[raw.index(after: eq)...])
-            try assertEnvKey(key)
+            guard wholeMatch(key, "^[A-Za-z_][A-Za-z0-9_]{0,127}$") else { throw SpecError.invalid("env key") }
             if val.contains("\u{0}") || val.contains("\n") || val.contains("\r") {
                 throw SpecError.invalid("env value")
             }
             guard val.utf8.count <= Self.maxValueBytes else { throw SpecError.invalid("env value too long") }
         } else {
-            try assertEnvKey(raw)
+            guard wholeMatch(raw, "^[A-Za-z_][A-Za-z0-9_]{0,127}$") else { throw SpecError.invalid("env key") }
         }
         self.argv = raw
     }
 
     init(from decoder: Decoder) throws { try self.init(raw: try decoder.singleValueContainer().decode(String.self)) }
     func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(argv) }
-}
-
-private func assertEnvKey(_ k: String) throws {
-    guard let r = try? Regex("^[A-Za-z_][A-Za-z0-9_]{0,127}$"), k.wholeMatch(of: r) != nil else {
-        throw SpecError.invalid("env key")
-    }
 }
 
 // MARK: - VolumeSpec
@@ -169,15 +172,13 @@ private func assertPath(_ s: String) throws {
 
 // MARK: - MemorySpec
 
-/// `<unsigned>[K|M|G|T|P]` (KiB granularity per the CLI).
+/// `<unsigned>[k|K|m|M|g|G|t|T|p|P|e|E]` (KiB granularity per the CLI).
 struct MemorySpec: Sendable, Equatable, Codable {
     let argv: String
 
     init(raw: String) throws {
         try assertArgvSafe(raw)
-        guard let r = try? Regex("^[0-9]+[KMGTPE]?$"), raw.wholeMatch(of: r) != nil else {
-            throw SpecError.invalid("memory")
-        }
+        guard wholeMatch(raw, "^[0-9]+[bBkKmMgGtTpPeE]?$") else { throw SpecError.invalid("memory") }
         self.argv = raw
     }
 
@@ -191,7 +192,6 @@ struct MemorySpec: Sendable, Equatable, Codable {
 struct ContainerRunRequest: Codable, Sendable {
     let image: String
     let name: String?
-    let entrypoint: String?
     let ports: [PortSpec]
     let env: [EnvSpec]
     let volumes: [VolumeSpec]
@@ -211,13 +211,6 @@ struct ContainerRunRequest: Codable, Sendable {
             guard IDValidator.validate(name) else { throw SpecError.invalid("name") }
             self.name = name
         } else { self.name = nil }
-
-        if let ep = try c.decodeIfPresent(String.self, forKey: .entrypoint) {
-            guard !ep.contains("\u{0}"), !ep.contains("\n"), !ep.contains("\r"), ep.utf8.count <= 4096 else {
-                throw SpecError.invalid("entrypoint")
-            }
-            self.entrypoint = ep
-        } else { self.entrypoint = nil }
 
         let ports = try c.decodeIfPresent([PortSpec].self, forKey: .ports) ?? []
         guard ports.count <= 64 else { throw SpecError.invalid("too many ports") }
@@ -251,6 +244,6 @@ struct ContainerRunRequest: Codable, Sendable {
     }
 
     private enum Keys: String, CodingKey {
-        case image, name, entrypoint, ports, env, volumes, cpus, memory, args, rm
+        case image, name, ports, env, volumes, cpus, memory, args, rm
     }
 }

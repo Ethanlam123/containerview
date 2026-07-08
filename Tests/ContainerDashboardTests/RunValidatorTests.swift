@@ -39,6 +39,21 @@ func port_invalid(_ raw: String) {
     #expect(throws: SpecError.self) { try PortSpec(raw: "0.0.0.0:8080:80") }
 }
 
+@Test func port_remote_bind_allowed_when_opted_in() throws {
+    // The injectable policy lets the opt-in branch be exercised without env mutation.
+    let p = try PortSpec(raw: "0.0.0.0:8080:80", allowRemote: true)
+    #expect(p.argv == "0.0.0.0:8080:80/tcp")
+}
+
+@Test func port_loopback_range_accepted() throws {
+    // 127.0.0.0/8 is loopback; 127.1.2.3 is safe to bind without the opt-in.
+    #expect((try PortSpec(raw: "127.1.2.3:8080:80")).argv == "127.1.2.3:8080:80/tcp")
+}
+
+@Test func port_bad_octet_rejected() {
+    #expect(throws: SpecError.self) { try PortSpec(raw: "999.0.0.1:80:80") }
+}
+
 // MARK: - EnvSpec
 
 @Test func env_key_value() throws {
@@ -99,6 +114,11 @@ func volume_invalid(_ raw: String) {
 @Test func memory_with_suffix() throws {
     let m = try MemorySpec(raw: "512M")
     #expect(m.argv == "512M")
+}
+
+@Test func memory_accepts_lowercase_units() throws {
+    #expect(try MemorySpec(raw: "512m").argv == "512m")
+    #expect(try MemorySpec(raw: "2g").argv == "2g")
 }
 
 @Test(arguments: [

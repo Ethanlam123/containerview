@@ -106,7 +106,6 @@ enum ContainerCLI {
         defer { try? FileManager.default.removeItem(at: cidFile) }
         var argv = ["run", "--detach", "--cidfile", cidFile.path]
         if let name = req.name { argv += ["--name", name] }
-        if let entrypoint = req.entrypoint { argv += ["--entrypoint", entrypoint] }
         for p in req.ports { argv += ["-p", p.argv] }
         for e in req.env { argv += ["-e", e.argv] }
         for v in req.volumes { argv += ["-v", v.argv] }
@@ -125,16 +124,16 @@ enum ContainerCLI {
     }
 
     /// Reserve a unique cidfile path. `O_CREAT|O_EXCL|O_NOFOLLOW` rules out both
-    /// collisions and symlink planting in the temp dir; the CLI overwrites it.
+    /// collision and symlink planting in the temp dir; the CLI overwrites it.
+    /// A UUIDv4 basename makes a real collision astronomically unlikely, so a
+    /// single attempt is enough - `O_EXCL` fails loudly if one happens anyway.
     private static func reserveCidFile() throws -> URL {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-        for _ in 0..<8 {
-            let path = dir.appendingPathComponent(UUID().uuidString + ".cid")
-            let fd = open(path.path, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY, mode_t(0o600))
-            if fd >= 0 { close(fd); return path }
-            if errno != EEXIST { throw CLIError.decoding("cidfile reserve failed") }
-        }
-        throw CLIError.decoding("cidfile reserve exhausted")
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString + ".cid")
+        let fd = open(path.path, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY, mode_t(0o600))
+        guard fd >= 0 else { throw CLIError.decoding("cidfile reserve failed") }
+        close(fd)
+        return path
     }
 
     // MARK: Helpers

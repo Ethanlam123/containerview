@@ -291,8 +291,7 @@ code, pre, .mono { font-family: var(--mono); }
 .create-form .field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
 .create-form .field > span { color: var(--dim); }
 .create-form .field > span .req { color: var(--orange); font-style: normal; font-size: 10px; margin-left: 4px; }
-.create-form input[type="text"],
-.create-form input:not([type]) {
+.create-form input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
   padding: 6px 9px; color: var(--text); font-family: var(--mono); font-size: 12px;
 }

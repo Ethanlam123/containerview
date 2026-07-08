@@ -327,9 +327,8 @@ function gatherCreate() {
     ports: arr('ports'),
     env: arr('env'),
     volumes: arr('volumes'),
-    // args are space-separated here (no shell-quote parsing in v1); they land
-    // after `image` as the container init argv.
-    args: val('args') ? val('args').split(/\s+/).filter(Boolean) : [],
+    // ponytail: no shell-quote parsing in v1; lands after `image` as init argv.
+    args: val('args').split(/\s+/).filter(Boolean),
   };
   const name = val('name'); if (name) body.name = name;
   const cpus = val('cpus'); if (cpus) body.cpus = Number(cpus);
@@ -338,36 +337,23 @@ function gatherCreate() {
   return body;
 }
 
-// Light mirror of the server validators; surfaces format errors before submit.
-function clientValidateCreate(b) {
-  if (!b.image) return 'image is required';
-  if (b.name && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(b.name)) return 'invalid name';
-  if (!/^[A-Za-z0-9][A-Za-z0-9/:._@-]{0,255}$/.test(b.image)) return 'invalid image reference';
-  for (const p of b.ports) if (!/^([\d.]+:)?\d+:\d+(\/(tcp|udp|sctp))?$/i.test(p)) return `invalid port: ${p}`;
-  for (const e of b.env) if (!/^[A-Za-z_][A-Za-z0-9_]*(=.*)?$/.test(e)) return `invalid env: ${e}`;
-  if (b.memory && !/^\d+[KMGTPE]?$/i.test(b.memory)) return `invalid memory: ${b.memory}`;
-  return null;
-}
-
 async function onCreateSubmit(e) {
   e.preventDefault();
   const errEl = $('create-error');
   errEl.textContent = '';
   const body = gatherCreate();
-  const cerr = clientValidateCreate(body);
-  if (cerr) { errEl.textContent = cerr; return; }
   const btn = $('create-submit');
   btn.disabled = true;
   btn.textContent = 'Creating...';
   try {
     await api.createContainer(body);
     $('create-form').reset();
-    document.querySelectorAll('.repeat-rows').forEach((r) => {
-      Array.from(r.querySelectorAll('.repeat-item')).forEach((x) => x.remove());
-    });
+    document.querySelectorAll('.repeat-item').forEach((x) => x.remove());
     closeCreate();
     await poll(true);   // confirm the new row appears
   } catch (err) {
+    // The server is the validation authority; it returns a field label (never
+    // the offending value) on 4xx, a generic message on 5xx.
     errEl.textContent = err.message || 'create failed';
   } finally {
     btn.disabled = false;

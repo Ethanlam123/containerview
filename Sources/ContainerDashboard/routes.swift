@@ -58,13 +58,15 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
     app.post("api", "containers", "run") { req async throws -> Response in
         let body: ContainerRunRequest
         do { body = try req.content.decode(ContainerRunRequest.self) }
-        catch { throw Abort(.badRequest, reason: "invalid run request") }
+        catch {
+            // SpecError reasons are fixed server labels (never the offending
+            // value), safe to surface for UX; other decode errors stay generic.
+            let detail = (error as? SpecError).map { "\($0)" } ?? "format"
+            throw Abort(.badRequest, reason: "invalid run request: \(detail)")
+        }
         do {
             let id = try await ContainerCLI.run(runner, req: body)
-            let json = try JSONEncoder().encode(RunResponse(id: id))
-            var headers = HTTPHeaders()
-            headers.add(name: .contentType, value: "application/json")
-            return Response(status: .created, headers: headers, body: Response.Body(data: json))
+            return jsonResponse(try JSONEncoder().encode(RunResponse(id: id)), status: .created)
         } catch {
             throw Abort(.internalServerError, reason: "container run failed")
         }
@@ -102,22 +104,27 @@ private func validatedID(_ req: Request, _ param: String = "id") throws -> Strin
     return value
 }
 
-/// Run a side-effecting CLI command; 2xx on success, 500 with the CLI error on failure.
+/// Run a side-effecting CLI command; 2xx on success, generic 500 on failure (do
+/// not reflect CLI output - future stderr-carrying errors may contain user input).
 private func runAction(_ work: () async throws -> Void) async throws -> Response {
     do {
         try await work()
         return Response(status: .ok)
     } catch {
-        throw Abort(.internalServerError, reason: "\(error)")
+        throw Abort(.internalServerError, reason: "command failed")
     }
+}
+
+/// JSON response from raw bytes. Shared by passthrough reads + the run route.
+private func jsonResponse(_ data: Data, status: HTTPResponseStatus = .ok) -> Response {
+    var headers = HTTPHeaders()
+    headers.add(name: .contentType, value: "application/json; charset=utf-8")
+    return Response(status: status, headers: headers, body: Response.Body(data: data))
 }
 
 /// Serve raw JSON bytes (for heterogeneous system properties / dns payloads).
 private func passthrough(_ data: () async throws -> Data) async throws -> Response {
-    let bytes = try await data()
-    var headers = HTTPHeaders()
-    headers.add(name: .contentType, value: "application/json; charset=utf-8")
-    return Response(status: .ok, headers: headers, body: Response.Body(data: bytes))
+    jsonResponse(try await data())
 }
 
 /// `POST /api/containers/run` success body: the new container id.
