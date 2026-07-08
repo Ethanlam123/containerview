@@ -32,7 +32,9 @@ $('builder-stop').addEventListener('click', () => act('builder-stop'));
 $('image-search').addEventListener('input', (e) => renderImages(lastState, e.target.value, openImageModal));
 $('modal-close').addEventListener('click', closeModal);
 $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
-$('advanced-toggle').addEventListener('toggle', loadAdvanced);
+// The `toggle` event fires on <details> and does not bubble, so the listener
+// must live on the <details> element (not its <summary> child).
+document.querySelector('details.advanced')?.addEventListener('toggle', loadAdvanced);
 
 document.addEventListener('visibilitychange', onVisibility);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
@@ -274,17 +276,20 @@ function closeModal() {
 // ---------- advanced disclosure ----------
 
 async function loadAdvanced() {
-  if (!$('advanced-toggle').parentElement.open) return;
-  $('advanced-properties').textContent = 'loading...';
-  $('advanced-dns').textContent = 'loading...';
-  const fmt = (j) => JSON.stringify(j, null, 2);
-  const safe = (p) => p.then(fmt).catch((e) => `unavailable: ${e.message}`);
-  const [props, dns] = await Promise.all([
-    safe(api.fetchJson('/api/system/properties')),
-    safe(api.fetchJson('/api/system/dns')),
-  ]);
-  $('advanced-properties').textContent = props;
-  $('advanced-dns').textContent = dns;
+  const details = document.querySelector('details.advanced');
+  if (!details?.open) return;
+  const propsEl = $('advanced-properties');
+  const dnsEl = $('advanced-dns');
+  propsEl.textContent = 'loading...';
+  dnsEl.textContent = 'loading...';
+  // Fire each independently and set on resolve/reject, so a slow or hanging
+  // endpoint (system properties can stall) never blocks the other.
+  const load = async (el, url) => {
+    try { el.textContent = JSON.stringify(await api.fetchJson(url), null, 2); }
+    catch (e) { el.textContent = `unavailable: ${e.message}`; }
+  };
+  load(propsEl, '/api/system/properties');
+  load(dnsEl, '/api/system/dns');
 }
 
 // ---------- misc ----------

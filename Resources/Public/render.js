@@ -44,20 +44,24 @@ export function resetSparklines() {
   sparkHistory.mem = [];
 }
 
-/// Status badge + last-refresh stamp.
+/// Status badge + last-refresh stamp. `container system status` reports
+/// `status: "running"` (not "ok"), and is absent entirely when the system is
+/// stopped (that section fails into a warning) - so green requires health
+/// present and matching, red when it is missing or the fetch failed.
 export function renderHeader(state, ok) {
   const badge = els.statusBadge();
   const label = badge.querySelector('.label');
   badge.className = 'badge';
-  if (!ok) {
-    badge.classList.add('badge-stopped');
-    label.textContent = 'System Stopped';
-  } else if (state && state.health && state.health.status === 'ok') {
+  const up = ok && !!state?.health && /running|ok/i.test(state.health.status || '');
+  if (up) {
     badge.classList.add('badge-running');
     label.textContent = 'System Running';
+  } else if (!ok || !state?.health) {
+    badge.classList.add('badge-stopped');
+    label.textContent = 'System Stopped';
   } else {
     badge.classList.add('badge-unknown');
-    label.textContent = state ? 'Degraded' : 'No data';
+    label.textContent = 'Degraded';
   }
   els.lastRefresh().textContent = new Date().toLocaleTimeString();
 }
@@ -190,6 +194,13 @@ function pillClass(state) {
   return '';
 }
 
+/// A mount's `type` is a single-key object (`{"virtiofs":{}}` / `{"bind":{...}}`);
+/// the `kind` exists only as a Swift computed property, so derive the tag from
+/// the JSON key here.
+function mountKind(t) {
+  return (t && typeof t === 'object' && Object.keys(t)[0]) || 'mount';
+}
+
 export function renderContainerDetail(body, id) {
   const root = document.querySelector(`[data-detail-body="${cssEscape(id)}"]`);
   if (!root) return;
@@ -205,7 +216,7 @@ export function renderContainerDetail(body, id) {
     <div class="detail-kv"><span class="k">Image digest</span><span class="v">${esc(shortHash(c.configuration?.image?.descriptor?.digest, 24))}</span></div>
     <div class="detail-kv"><span class="k">Started</span><span class="v">${esc(c.status?.startedDate || '-')}</span></div>
     <div class="detail-kv"><span class="k">Ports</span><span class="v">${ports.length ? ports.map((p) => `${p.hostAddress}:${p.hostPort}->${p.containerPort}/${p.proto}`).join(', ') : '-'}</span></div>
-    <div class="detail-kv"><span class="k">Mounts</span><span class="v">${mounts.length ? mounts.map((m) => `${m.type?.kind}: ${esc(m.source)} -> ${esc(m.destination)}`).join(', ') : '-'}</span></div>
+    <div class="detail-kv"><span class="k">Mounts</span><span class="v">${mounts.length ? mounts.map((m) => `${mountKind(m.type)}: ${esc(m.source)} -> ${esc(m.destination)}`).join(', ') : '-'}</span></div>
     <div class="detail-logs" data-logs="${esc(id)}">
       <div class="logs-bar">
         <span class="k dim">Logs</span>

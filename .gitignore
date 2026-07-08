@@ -14,3 +14,9 @@ DerivedData/
 .idea/
 
 # Note: Package.resolved IS committed for applications (locks dependency versions)
+
+# Local MCP config (Claude Code)
+.mcp.json
+
+# Test screenshots
+.screenshots/
