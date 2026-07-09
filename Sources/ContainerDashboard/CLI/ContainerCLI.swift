@@ -7,6 +7,12 @@ import Darwin
 enum ContainerCLI {
     private static let decoder = JSONDecoder()
     private static let timeout = Duration.seconds(3)
+    /// VM lifecycle / builder writes can take many seconds - a measured
+    /// `container stop` of a running VM took ~6.6s. The 3s read ceiling is wrong
+    /// for them: the runner SIGKILLs the `container` CLI mid-action (spurious 500
+    /// to the caller) while the VM keeps shutting down, so the action ultimately
+    /// succeeds but the optimistic UI reverts on a real success.
+    private static let writeTimeout = Duration.seconds(30)
 
     // MARK: Reads
 
@@ -84,12 +90,12 @@ enum ContainerCLI {
 
     // Writes go through `runUncached` so the cache decorator cannot turn a
     // repeated (e.g. double-clicked) side-effecting call into a cached no-op.
-    static func stop(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["stop", id]) }
-    static func start(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["start", id]) }
-    static func kill(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["kill", id]) }
+    static func stop(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["stop", id], timeout: writeTimeout) }
+    static func start(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["start", id], timeout: writeTimeout) }
+    static func kill(_ r: some CommandRunner, id: String) async throws { _ = try await runUncached(r, ["kill", id], timeout: writeTimeout) }
 
-    static func builderStart(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "start"]) }
-    static func builderStop(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "stop"]) }
+    static func builderStart(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "start"], timeout: writeTimeout) }
+    static func builderStop(_ r: some CommandRunner) async throws { _ = try await runUncached(r, ["builder", "stop"], timeout: writeTimeout) }
 
     /// `container image pull <ref>` - uncached (side-effecting) and output-
     /// discarding (pull emits enough progress to overflow a pipe buffer and hang
@@ -150,7 +156,7 @@ enum ContainerCLI {
         try await r.run(binary: "container", args: args, timeout: timeout)
     }
 
-    private static func runUncached(_ r: some CommandRunner, _ args: [String]) async throws -> Data {
+    private static func runUncached(_ r: some CommandRunner, _ args: [String], timeout: Duration = timeout) async throws -> Data {
         try await r.runUncached(binary: "container", args: args, timeout: timeout)
     }
 
