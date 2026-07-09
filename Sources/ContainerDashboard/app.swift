@@ -14,7 +14,10 @@ struct App {
         let hostname = allowRemote ? "0.0.0.0" : "127.0.0.1"
         try LoopbackGuard.validate(hostname: hostname, allowRemote: allowRemote)
         app.http.server.configuration.hostname = hostname
-        app.http.server.configuration.port = 8080
+        // 8080 is the documented default but is heavily contested on macOS
+        // (TencentMeeting, dev servers). Allow an override so the app is runnable
+        // without editing source; the README documents the default.
+        app.http.server.configuration.port = ProcessInfo.processInfo.environment["CONTAINER_DASHBOARD_PORT"].flatMap(Int.init) ?? 8080
 
         try configure(app)
         try await app.execute()

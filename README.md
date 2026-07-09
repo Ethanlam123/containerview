@@ -45,6 +45,7 @@ The server binds to **127.0.0.1 only** and refuses to start for any non-loopback
 
 | Variable | Default | Effect |
 | --- | --- | --- |
+| `CONTAINER_DASHBOARD_PORT` | `8080` | TCP port to listen on. 8080 is heavily contested on macOS (meeting apps, dev servers); set this to run without editing source. |
 | `CONTAINER_DASHBOARD_ALLOW_REMOTE` | unset | `1` permits a non-loopback bind (`run.sh --allow-remote`). Off keeps the server loopback-only. |
 | `CONTAINERDASHBOARD_ENABLE_EXEC` | unset | `1` enables the interactive terminal: the `exec` WebSocket route and the Terminal button. Off returns 404 and hides the button. |
 | `CONTAINERDASHBOARD_ALLOW_REMOTE_BIND` | unset | `1` lets `container run -p` bind a non-loopback host-ip. Off rewrites published ports to `127.0.0.1` and rejects an explicit non-loopback host-ip. |
