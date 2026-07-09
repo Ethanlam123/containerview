@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>Container - Monitor</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/lib/xterm.css" />
 </head>
 <body>
   <header class="topbar">
@@ -171,6 +172,17 @@
     </div>
   </div>
 
+  <!-- Terminal modal (exec; opt-in, hidden when /api/capabilities exec=false) -->
+  <div id="terminal-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="terminal-title">
+    <div class="modal-card terminal-card">
+      <header class="modal-head">
+        <h2 id="terminal-title">Terminal</h2>
+        <button id="terminal-close" class="btn btn-ghost" aria-label="Close">x</button>
+      </header>
+      <div id="terminal-mount" class="terminal-mount"></div>
+    </div>
+  </div>
+
   <!-- Create container modal -->
   <div id="create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="create-title">
     <div class="modal-card create-card">
@@ -214,6 +226,9 @@
     </div>
   </div>
 
+  <!-- Vendored UMD bundles (see lib/README.md); set globals before app.js. -->
+  <script src="/lib/xterm.js"></script>
+  <script src="/lib/xterm-addon-fit.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@ import {
   renderBuilder, renderDiskUsage, renderImages, renderMachines, renderFooter,
   setPolling, resetSparklines,
 } from './render.js';
+import { openTerminal } from './terminal.js';
 
 const CACHE_KEY = 'containerDashboard:lastState';
 const expanded = new Set();            // expanded container ids
@@ -16,6 +17,7 @@ let pollTimer = null;
 let inFlight = false;
 let autoRefresh = true;
 let intervalSec = 5;
+let execEnabled = false;               // from /api/capabilities; gates the Terminal button
 
 // ---------- bootstrap ----------
 
@@ -48,6 +50,13 @@ try {
 
 poll(true);   // kick the first tick immediately
 scheduleNext();
+
+// Feature flags (exec opt-in). Fetched once; re-paint so the Terminal button
+// appears as soon as the flag resolves (the poll loop also carries it).
+api.fetchCapabilities().then((caps) => {
+  execEnabled = !!caps.exec;
+  if (lastState) paint(lastState, true);
+});
 
 // ---------- poll loop ----------
 
@@ -91,7 +100,7 @@ function paint(state, ok) {
   renderHeader(state, ok);
   // onOrphaned closes the logs stream + clears `expanded` for any container
   // that vanished this tick (renderContainers drops its detail row).
-  renderContainers(state, expanded, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); });
+  renderContainers(state, expanded, execEnabled, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); });
   renderBuilder(state);
   renderDiskUsage(state, onPrune);
   renderImages(state, $('image-search').value, openImageModal);
@@ -389,6 +398,37 @@ async function onPullSubmit(e) {
     btn.disabled = false;
     btn.textContent = prev;
   }
+}
+
+// ---------- terminal (exec) ----------
+
+// One terminal at a time. `data-terminal` (not `data-act`) keeps this off the
+// optimistic-action path, which disables buttons + forces a poll - wrong for a
+// panel open. The backend sends binary frames; see terminal.js for the wiring.
+let currentTerminal = null;
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-terminal]');
+  if (!b) return;
+  e.stopPropagation();
+  openTerminalPanel(b.dataset.terminal);
+});
+$('terminal-close').addEventListener('click', closeTerminalPanel);
+$('terminal-modal').addEventListener('click', (e) => { if (e.target.id === 'terminal-modal') closeTerminalPanel(); });
+
+function openTerminalPanel(id) {
+  if (currentTerminal) { currentTerminal.dispose(); currentTerminal = null; }
+  const mount = $('terminal-mount');
+  mount.innerHTML = '';
+  $('terminal-title').textContent = `Terminal - ${id.slice(0, 12)}`;
+  $('terminal-modal').classList.remove('hidden');
+  currentTerminal = openTerminal(id, mount);
+}
+
+function closeTerminalPanel() {
+  $('terminal-modal').classList.add('hidden');
+  if (currentTerminal) { currentTerminal.dispose(); currentTerminal = null; }
+  $('terminal-mount').innerHTML = '';
 }
 
 // ---------- advanced disclosure ----------

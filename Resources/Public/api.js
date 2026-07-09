@@ -78,6 +78,19 @@ export async function inspectImage(name) {
   return res.json();
 }
 
+/// Feature flags from the backend. Used to gate the Terminal button on the exec
+/// opt-in (`CONTAINERDASHBOARD_ENABLE_EXEC=1`, default off). Fail-closed: any
+/// error or non-2xx hides the button.
+export async function fetchCapabilities() {
+  try {
+    const res = await fetch('/api/capabilities', { headers: { Accept: 'application/json' } });
+    if (!res.ok) return { exec: false };
+    return await res.json();
+  } catch {
+    return { exec: false };
+  }
+}
+
 /// Raw passthrough JSON (system properties / dns), for the Advanced disclosure.
 export async function fetchJson(path) {
   const res = await fetch(path);

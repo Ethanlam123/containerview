@@ -281,6 +281,11 @@ code, pre, .mono { font-family: var(--mono); }
 .modal-head h2 { font-size: 14px; margin: 0; }
 #modal-body { margin: 0; border: none; border-radius: 0; max-height: none; flex: 1; border-top: 1px solid var(--border); }
 
+/* ---------- terminal modal ---------- */
+.terminal-card { max-width: 980px; height: 80vh; }
+.terminal-mount { flex: 1; min-height: 0; padding: 8px 10px; background: var(--bg); overflow: hidden; }
+.terminal-mount .xterm { height: 100%; padding: 6px; box-sizing: border-box; }
+
 @media (max-width: 600px) {
   .topbar { flex-wrap: wrap; }
   .stat-cards { grid-template-columns: 1fr; }

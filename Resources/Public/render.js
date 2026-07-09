@@ -99,7 +99,7 @@ export function renderBanners(err, warnings) {
 /// its DOM nodes - and the logs `pre` + button listeners they carry - survive
 /// polling instead of resetting to "loading..." every interval. Details are
 /// inserted/removed by `app.js` on toggle; this function only preserves them.
-export function renderContainers(state, expanded, onToggle, onOrphaned) {
+export function renderContainers(state, expanded, exec, onToggle, onOrphaned) {
   const tbody = els.containersBody();
   const containers = (state && state.containers) || [];
 
@@ -125,7 +125,7 @@ export function renderContainers(state, expanded, onToggle, onOrphaned) {
   if (containers.length === 0) {
     tbody.innerHTML = '';
   } else {
-    tbody.innerHTML = containers.map((c) => rowHtml(c, statsById[c.id])).join('');
+    tbody.innerHTML = containers.map((c) => rowHtml(c, statsById[c.id], exec)).join('');
     tbody.querySelectorAll('tr.row').forEach((tr) => {
       tr.addEventListener('click', (e) => {
         if (e.target.closest('button, .expand-caret')) return;
@@ -160,7 +160,7 @@ export function renderContainers(state, expanded, onToggle, onOrphaned) {
   drawSpark(els.sparkMem(), sparkHistory.mem, els.sparkMemVal(), formatBytes(aggMem));
 }
 
-function rowHtml(c, st) {
+function rowHtml(c, st, exec) {
   const cfg = c.configuration || {};
   const state = (c.status?.state || 'unknown').toLowerCase();
   const net0 = c.status?.networks?.[0];
@@ -168,6 +168,12 @@ function rowHtml(c, st) {
   const cpu = st ? formatPercent(st.cpuPercent) : '-';
   const mem = st ? formatBytes(st.stats?.memoryUsageBytes) : '-';
   const arch = cfg.platform?.architecture || '-';
+  // Terminal only on running containers, and only when the backend reports exec
+  // enabled. `data-terminal` (not `data-act`) so it bypasses the optimistic
+  // action machinery in app.js and opens the panel instead.
+  const termBtn = (exec && /running/.test(state))
+    ? `<button class="btn btn-sm btn-ghost" data-terminal="${esc(c.id)}" title="Open shell">Terminal</button>`
+    : '';
   return `
     <tr class="row" data-id="${esc(c.id)}">
       <td><span class="expand-caret">&#9656;</span></td>
@@ -179,6 +185,7 @@ function rowHtml(c, st) {
       <td class="num">${mem}</td>
       <td class="row-arch">${esc(arch)}</td>
       <td class="row-actions" data-actions="${esc(c.id)}">
+        ${termBtn}
         <button class="btn btn-sm btn-ghost" data-act="start">Start</button>
         <button class="btn btn-sm btn-ghost" data-act="stop">Stop</button>
         <button class="btn btn-sm btn-ghost btn-danger" data-act="kill">Kill</button>
