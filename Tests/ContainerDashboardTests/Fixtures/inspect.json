@@ -1,0 +1,146 @@
+[
+  {
+    "configuration" : {
+      "capAdd" : [
+
+      ],
+      "capDrop" : [
+
+      ],
+      "creationDate" : "2026-07-06T04:24:01Z",
+      "dns" : {
+        "nameservers" : [
+
+        ],
+        "options" : [
+
+        ],
+        "searchDomains" : [
+
+        ]
+      },
+      "id" : "hermes",
+      "image" : {
+        "descriptor" : {
+          "digest" : "sha256:1c4d2e83a61c4bc85fb1d928aac61e4a6d2df192a3ed656488f6ae330651ee44",
+          "mediaType" : "application\/vnd.oci.image.index.v1+json",
+          "size" : 1609
+        },
+        "reference" : "docker.io\/nousresearch\/hermes-agent:latest"
+      },
+      "initProcess" : {
+        "arguments" : [
+          "\/opt\/hermes\/docker\/main-wrapper.sh",
+          "gateway",
+          "run"
+        ],
+        "environment" : [
+          "PYTHONUNBUFFERED=1",
+          "HERMES_WEB_DIST=\/opt\/hermes\/hermes_cli\/web_dist",
+          "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=REDACTED",
+          "HERMES_HOME=\/opt\/data",
+          "HERMES_LAZY_INSTALL_TARGET=\/opt\/data\/lazy-packages",
+          "HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin",
+          "PATH=\/opt\/hermes\/bin:\/opt\/hermes\/.venv\/bin:\/opt\/data\/.local\/bin:\/usr\/local\/sbin:\/usr\/local\/bin:\/usr\/sbin:\/usr\/bin:\/sbin:\/bin",
+          "PLAYWRIGHT_BROWSERS_PATH=\/opt\/hermes\/.playwright",
+          "HERMES_UID=501",
+          "HERMES_DASHBOARD_HOST=0.0.0.0",
+          "HERMES_DASHBOARD_PORT=9119",
+          "npm_config_install_links=false",
+          "HERMES_GID=20",
+          "PYTHONDONTWRITEBYTECODE=1",
+          "HERMES_DASHBOARD=1",
+          "HERMES_TUI_DIR=\/opt\/hermes\/ui-tui",
+          "HERMES_DISABLE_LAZY_INSTALLS=1",
+          "HERMES_WRITE_SAFE_ROOT=\/opt\/data"
+        ],
+        "executable" : "\/init",
+        "rlimits" : [
+
+        ],
+        "supplementalGroups" : [
+
+        ],
+        "terminal" : false,
+        "user" : {
+          "raw" : {
+            "userString" : "root"
+          }
+        },
+        "workingDirectory" : "\/opt\/hermes"
+      },
+      "labels" : {
+
+      },
+      "mounts" : [
+        {
+          "destination" : "\/opt\/data",
+          "options" : [
+
+          ],
+          "source" : "\/Users\/yusinglam\/.hermes",
+          "type" : {
+            "virtiofs" : {
+
+            }
+          }
+        }
+      ],
+      "networks" : [
+        {
+          "network" : "default",
+          "options" : {
+            "hostname" : "hermes",
+            "mtu" : 1280
+          }
+        }
+      ],
+      "platform" : {
+        "architecture" : "arm64",
+        "os" : "linux"
+      },
+      "publishedPorts" : [
+        {
+          "containerPort" : 9119,
+          "count" : 1,
+          "hostAddress" : "127.0.0.1",
+          "hostPort" : 9119,
+          "proto" : "tcp"
+        }
+      ],
+      "publishedSockets" : [
+
+      ],
+      "readOnly" : false,
+      "resources" : {
+        "cpuOverhead" : 1,
+        "cpus" : 4,
+        "memoryInBytes" : 1073741824
+      },
+      "rosetta" : false,
+      "runtimeHandler" : "container-runtime-linux",
+      "ssh" : false,
+      "sysctls" : {
+
+      },
+      "useInit" : false,
+      "virtualization" : false
+    },
+    "id" : "hermes",
+    "status" : {
+      "networks" : [
+        {
+          "hostname" : "hermes",
+          "ipv4Address" : "192.168.64.8\/24",
+          "ipv4Gateway" : "192.168.64.1",
+          "ipv6Address" : "fdd5:5cc2:5b56:2001:f8da:cbff:feee:39fa\/64",
+          "macAddress" : "fa:da:cb:ee:39:fa",
+          "mtu" : 1280,
+          "network" : "default"
+        }
+      ],
+      "startedDate" : "2026-07-06T07:40:36Z",
+      "state" : "running"
+    }
+  }
+]

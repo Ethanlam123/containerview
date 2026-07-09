@@ -1,0 +1,391 @@
+// Pure-ish render functions: given a DOM root element id and a data slice,
+// stamp the panel. No fetching here - app.js owns the poll loop and hands
+// rendered state to these. Sparkline history is kept in module state.
+import { formatBytes, formatPercent, shortHash, esc, cssEscape } from './api.js';
+
+const els = {
+  statusBadge:    () => document.getElementById('status-badge'),
+  pollDot:        () => document.getElementById('poll-dot'),
+  lastRefresh:    () => document.getElementById('last-refresh'),
+  errorBanner:    () => document.getElementById('error-banner'),
+  warningsBanner: () => document.getElementById('warnings-banner'),
+  containersBody: () => document.getElementById('containers-tbody'),
+  containersEmpty:() => document.getElementById('containers-empty'),
+  containersCount:() => document.getElementById('containers-count'),
+  resContainers:  () => document.getElementById('res-containers'),
+  resMemory:      () => document.getElementById('res-memory'),
+  resNetworks:    () => document.getElementById('res-networks'),
+  sparkCpu:       () => document.getElementById('spark-cpu'),
+  sparkMem:       () => document.getElementById('spark-mem'),
+  sparkCpuVal:    () => document.getElementById('spark-cpu-val'),
+  sparkMemVal:    () => document.getElementById('spark-mem-val'),
+  builderState:   () => document.getElementById('builder-state'),
+  builderCpus:    () => document.getElementById('builder-cpus'),
+  builderMemory:  () => document.getElementById('builder-memory'),
+  builderId:      () => document.getElementById('builder-id'),
+  diskRows:       () => document.getElementById('disk-rows'),
+  imagesGrid:     () => document.getElementById('images-grid'),
+  imagesEmpty:    () => document.getElementById('images-empty'),
+  imagesStorage:  () => document.getElementById('images-storage-fill'),
+  machinesList:   () => document.getElementById('machines-list'),
+  machinesEmpty:  () => document.getElementById('machines-empty'),
+  footerCli:      () => document.getElementById('footer-cli'),
+  footerApi:      () => document.getElementById('footer-apiserver'),
+  footerMacos:    () => document.getElementById('footer-macos'),
+  footerBuild:    () => document.getElementById('footer-build'),
+};
+
+// Sparkline history (aggregated per tick). Capped ring buffer.
+const SPARK_N = 60;
+const sparkHistory = { cpu: [], mem: [] };
+
+export function resetSparklines() {
+  sparkHistory.cpu = [];
+  sparkHistory.mem = [];
+}
+
+/// Status badge + last-refresh stamp. `container system status` reports
+/// `status: "running"` (not "ok"), and is absent entirely when the system is
+/// stopped (that section fails into a warning) - so green requires health
+/// present and matching, red when it is missing or the fetch failed.
+export function renderHeader(state, ok) {
+  const badge = els.statusBadge();
+  const label = badge.querySelector('.label');
+  badge.className = 'badge';
+  const up = ok && !!state?.health && /running|ok/i.test(state.health.status || '');
+  if (up) {
+    badge.classList.add('badge-running');
+    label.textContent = 'System Running';
+  } else if (!ok || !state?.health) {
+    badge.classList.add('badge-stopped');
+    label.textContent = 'System Stopped';
+  } else {
+    badge.classList.add('badge-unknown');
+    label.textContent = 'Degraded';
+  }
+  els.lastRefresh().textContent = new Date().toLocaleTimeString();
+}
+
+export function setPolling(active) {
+  els.pollDot().classList.toggle('active', active);
+}
+
+/// Banners: CLI-missing error + per-section warnings.
+export function renderBanners(err, warnings) {
+  const eb = els.errorBanner();
+  if (err) {
+    let html = escape(err.message || 'Connection error');
+    if (err.kind === 'cli-missing') {
+      html = `container CLI not found. Install from <a class="footer-link" href="https://github.com/apple/container" target="_blank" rel="noopener">apple/container</a>.`;
+    }
+    eb.innerHTML = html;
+    eb.classList.remove('hidden');
+  } else {
+    eb.classList.add('hidden');
+  }
+  const wb = els.warningsBanner();
+  if (warnings && warnings.length) {
+    wb.textContent = warnings.map((w) => `${w.section}: ${w.message}`).join(' - ');
+    wb.classList.remove('hidden');
+  } else {
+    wb.classList.add('hidden');
+  }
+}
+
+/// Containers table + resource overview + sparklines.
+///
+/// The summary rows are rebuilt each tick, but any open detail drawer
+/// (`tr.row-detail`) is detached before the rebuild and re-attached after, so
+/// its DOM nodes - and the logs `pre` + button listeners they carry - survive
+/// polling instead of resetting to "loading..." every interval. Details are
+/// inserted/removed by `app.js` on toggle; this function only preserves them.
+export function renderContainers(state, expanded, exec, onToggle, onOrphaned) {
+  const tbody = els.containersBody();
+  const containers = (state && state.containers) || [];
+
+  // One pass: stats-by-id map + sparkline aggregate (was two walks).
+  const statsById = {};
+  let aggCpu = 0, aggMem = 0;
+  for (const s of (state && state.stats) || []) {
+    statsById[s.stats?.id || s.id] = s;
+    aggCpu += s.cpuPercent || 0;
+    aggMem += s.stats?.memoryUsageBytes || 0;
+  }
+
+  els.containersCount().textContent = containers.length ? `${containers.length}` : '';
+  els.containersEmpty().classList.toggle('hidden', containers.length > 0);
+
+  // Snapshot open detail nodes so the innerHTML rebuild below does not destroy
+  // them; they are re-attached right after their summary row.
+  const liveDetails = new Map();
+  for (const d of Array.from(tbody.querySelectorAll('tr.row-detail'))) {
+    liveDetails.set(d.dataset.detail, d);
+  }
+  // The rebuild detaches + re-attaches detail nodes, which blurs an interactive
+  // terminal living inside one. Capture focus now, restore after re-attach so
+  // an active exec session survives polling.
+  const ae = document.activeElement;
+  const restoreFocus = ae && Array.from(liveDetails.values()).some((d) => d.contains(ae)) ? ae : null;
+
+  if (containers.length === 0) {
+    tbody.innerHTML = '';
+  } else {
+    tbody.innerHTML = containers.map((c) => rowHtml(c, statsById[c.id], exec)).join('');
+    tbody.querySelectorAll('tr.row').forEach((tr) => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('button, .expand-caret')) return;
+        onToggle(tr.dataset.id);
+      });
+      // Keep the caret reflecting expand state on the freshly built row.
+      if (expanded.has(tr.dataset.id)) {
+        const c = tr.querySelector('.expand-caret');
+        if (c) { c.classList.add('open'); c.innerHTML = '&#9662;'; }
+      }
+      // Re-attach this row's preserved detail, if any.
+      const detail = liveDetails.get(tr.dataset.id);
+      if (detail) tr.after(detail);
+    });
+  }
+  if (restoreFocus && document.body.contains(restoreFocus)) restoreFocus.focus();
+
+  // Rows that vanished this tick: drop their orphaned detail + tell the caller
+  // (it owns the logs stream + expanded set).
+  for (const [id, d] of liveDetails) {
+    if (!containers.some((c) => c.id === id)) { d.remove(); if (onOrphaned) onOrphaned(id); }
+  }
+
+  // Resource overview cards.
+  const running = containers.filter((c) => /running/i.test(c.status?.state || ''));
+  const memAlloc = running.reduce((a, c) => a + (c.configuration?.resources?.memoryInBytes || 0), 0);
+  els.resContainers().textContent = `${running.length} / ${containers.length}`;
+  els.resMemory().textContent = formatBytes(memAlloc);
+  els.resNetworks().textContent = (state && state.networks?.length) ?? '-';
+
+  pushSpark(aggCpu, aggMem);
+  drawSpark(els.sparkCpu(), sparkHistory.cpu, els.sparkCpuVal(), formatPercent(aggCpu));
+  drawSpark(els.sparkMem(), sparkHistory.mem, els.sparkMemVal(), formatBytes(aggMem));
+}
+
+function rowHtml(c, st, exec) {
+  const cfg = c.configuration || {};
+  const state = (c.status?.state || 'unknown').toLowerCase();
+  const net0 = c.status?.networks?.[0];
+  const ip = net0?.ipv4Address || net0?.ipv6Address || '-';
+  const cpu = st ? formatPercent(st.cpuPercent) : '-';
+  const mem = st ? formatBytes(st.stats?.memoryUsageBytes) : '-';
+  const arch = cfg.platform?.architecture || '-';
+  // Terminal only on running containers, and only when the backend reports exec
+  // enabled. `data-terminal` (not `data-act`) so it bypasses the optimistic
+  // action machinery in app.js and opens the panel instead.
+  const termBtn = (exec && /running/.test(state))
+    ? `<button class="btn btn-sm btn-ghost" data-terminal="${esc(c.id)}" title="Open shell">Terminal</button>`
+    : '';
+  return `
+    <tr class="row" data-id="${esc(c.id)}">
+      <td><span class="expand-caret">&#9656;</span></td>
+      <td class="row-name">${esc(cfg.id || c.id)}</td>
+      <td class="row-img">${esc(cfg.image?.reference || '-')}</td>
+      <td><span class="pill pill-${pillClass(state)}">${esc(state)}</span></td>
+      <td class="row-arch">${esc(ip)}</td>
+      <td class="num">${cpu}</td>
+      <td class="num">${mem}</td>
+      <td class="row-arch">${esc(arch)}</td>
+      <td class="row-actions" data-actions="${esc(c.id)}">
+        ${termBtn}
+        <button class="btn btn-sm btn-ghost" data-act="start">Start</button>
+        <button class="btn btn-sm btn-ghost" data-act="stop">Stop</button>
+        <button class="btn btn-sm btn-ghost btn-danger" data-act="kill">Kill</button>
+      </td>
+    </tr>
+  `;
+}
+
+function pillClass(state) {
+  if (/running/.test(state)) return 'running';
+  if (/created/.test(state)) return 'created';
+  if (/stopped|exited/.test(state)) return 'stopped';
+  return '';
+}
+
+/// A mount's `type` is a single-key object (`{"virtiofs":{}}` / `{"bind":{...}}`);
+/// the `kind` exists only as a Swift computed property, so derive the tag from
+/// the JSON key here.
+function mountKind(t) {
+  return (t && typeof t === 'object' && Object.keys(t)[0]) || 'mount';
+}
+
+export function renderContainerDetail(body, id, exec) {
+  const root = document.querySelector(`[data-detail-body="${cssEscape(id)}"]`);
+  if (!root) return;
+  const c = Array.isArray(body) ? body[0] : body;
+  if (!c) { root.textContent = 'no detail'; return; }
+  const ports = c.configuration?.publishedPorts || [];
+  const mounts = c.configuration?.mounts || [];
+  // Terminal pane renders only when exec is enabled. It sits below the logs in
+  // the same drawer (a stacked split) and mounts as soon as the drawer opens.
+  const termPane = exec
+    ? `<div class="detail-terminal" data-terminal-mount="${esc(id)}"></div>`
+    : '';
+  root.innerHTML = `
+    <div class="detail-kv"><span class="k">Hostname</span><span class="v">${esc(c.configuration?.hostname || c.status?.networks?.[0]?.hostname || '-')}</span></div>
+    <div class="detail-kv"><span class="k">OS / Arch</span><span class="v">${esc(c.configuration?.platform?.os || '-')}/${esc(c.configuration?.platform?.architecture || '-')}</span></div>
+    <div class="detail-kv"><span class="k">CPUs</span><span class="v">${esc(c.configuration?.resources?.cpus ?? '-')}</span></div>
+    <div class="detail-kv"><span class="k">Memory limit</span><span class="v">${formatBytes(c.configuration?.resources?.memoryInBytes)}</span></div>
+    <div class="detail-kv"><span class="k">Image digest</span><span class="v">${esc(shortHash(c.configuration?.image?.descriptor?.digest, 24))}</span></div>
+    <div class="detail-kv"><span class="k">Started</span><span class="v">${esc(c.status?.startedDate || '-')}</span></div>
+    <div class="detail-kv"><span class="k">Ports</span><span class="v">${ports.length ? ports.map((p) => `${p.hostAddress}:${p.hostPort}->${p.containerPort}/${p.proto}`).join(', ') : '-'}</span></div>
+    <div class="detail-kv"><span class="k">Mounts</span><span class="v">${mounts.length ? mounts.map((m) => `${mountKind(m.type)}: ${esc(m.source)} -> ${esc(m.destination)}`).join(', ') : '-'}</span></div>
+    <div class="detail-logs" data-logs="${esc(id)}">
+      <div class="logs-bar">
+        <span class="k dim">Logs</span>
+        <button class="btn btn-sm btn-ghost" data-logs-toggle>Pause</button>
+        <button class="btn btn-sm btn-ghost" data-logs-clear>Clear</button>
+      </div>
+      <pre class="logs-pre" data-logs-pre></pre>
+    </div>
+    ${termPane}
+  `;
+}
+
+/// Builder panel.
+export function renderBuilder(state) {
+  const arr = (state && state.builder) || [];
+  const b = arr[0];
+  const stateEl = els.builderState();
+  if (!b) {
+    stateEl.textContent = 'stopped';
+    stateEl.className = 'pill pill-stopped';
+    els.builderCpus().textContent = '-';
+    els.builderMemory().textContent = '-';
+    els.builderId().textContent = '-';
+    return;
+  }
+  const st = (b.state || 'unknown').toLowerCase();
+  stateEl.textContent = st;
+  stateEl.className = `pill pill-${/running/.test(st) ? 'running' : 'stopped'}`;
+  els.builderCpus().textContent = b.cpus ?? '-';
+  els.builderMemory().textContent = b.memoryInBytes != null ? formatBytes(b.memoryInBytes) : '-';
+  els.builderId().textContent = b.containerID ? shortHash(b.containerID, 12) : '-';
+}
+
+/// Disk usage widget with per-category Prune.
+export function renderDiskUsage(state, onPrune) {
+  const df = state && state.diskUsage;
+  const root = els.diskRows();
+  if (!df) { root.innerHTML = '<p class="empty">No disk-usage data.</p>'; return; }
+  const cats = [
+    ['Images', df.images, 'images'],
+    ['Containers', df.containers, 'containers'],
+    ['Volumes', df.volumes, 'volumes'],
+  ];
+  root.innerHTML = cats.map(([title, c, key]) => `
+    <div class="disk-row">
+      <div>
+        <div class="disk-title">${title}</div>
+        <div class="disk-sub">${c.active} active / ${c.total} total - ${formatBytes(c.sizeInBytes)}</div>
+      </div>
+      <div class="disk-reclaim">
+        ${formatBytes(c.reclaimable)} reclaimable
+        <button class="btn btn-sm btn-ghost btn-danger" data-prune="${key}">Prune</button>
+      </div>
+    </div>
+  `).join('');
+  root.querySelectorAll('[data-prune]').forEach((btn) => {
+    btn.addEventListener('click', () => onPrune(btn.dataset.prune));
+  });
+}
+
+/// Images card grid (filtered) + storage progress bar.
+export function renderImages(state, filter, onOpen) {
+  const images = (state && state.images) || [];
+  const root = els.imagesGrid();
+  els.imagesEmpty().classList.toggle('hidden', images.length > 0);
+  const f = (filter || '').toLowerCase();
+  // Pick each image's representative variant once (used for both the storage
+  // total and the card render) instead of re-walking variants twice.
+  const picked = images.map((i) => {
+    const v = i.variants?.find((x) => /arm64/.test(x.platform?.architecture || '')) || i.variants?.[0];
+    return { i, v };
+  });
+  const totalSize = picked.reduce((a, { v }) => a + (v?.size || 0), 0);
+  els.imagesStorage().style.width = Math.min(100, totalSize / (50 * 1024 * 1024 * 1024) * 100) + '%';
+  const filtered = picked.filter(({ i }) => !f || (i.configuration?.name || '').toLowerCase().includes(f));
+  if (filtered.length === 0) {
+    root.innerHTML = images.length ? '<p class="empty">No matches.</p>' : '';
+    return;
+  }
+  root.innerHTML = filtered.map(({ i, v }) => `
+      <div class="image-card" data-image="${esc(i.configuration?.name || '')}">
+        <div class="image-name">${esc(i.configuration?.name || i.id)}</div>
+        <div class="image-meta">
+          <span>${esc(v?.platform?.os || '-')}/${esc(v?.platform?.architecture || '-')}</span>
+          <span>${formatBytes(v?.size)}</span>
+        </div>
+      </div>
+    `).join('');
+  root.querySelectorAll('[data-image]').forEach((card) => {
+    card.addEventListener('click', () => onOpen(card.dataset.image));
+  });
+}
+
+/// Container machines panel.
+export function renderMachines(state, onCopy, onStop) {
+  const machines = (state && state.machines) || [];
+  const root = els.machinesList();
+  els.machinesEmpty().classList.toggle('hidden', machines.length > 0);
+  if (!machines.length) { root.innerHTML = ''; return; }
+  root.innerHTML = machines.map((m) => {
+    const name = m.configuration?.name || m.id || '-';
+    const st = (m.status?.state || 'unknown').toLowerCase();
+    const img = m.configuration?.image || '-';
+    const cpus = m.configuration?.resources?.cpus;
+    const mem = m.configuration?.resources?.memoryInBytes;
+    return `
+      <div class="machine-card" data-machine="${esc(m.id || name)}">
+        <div class="machine-head">
+          <span class="machine-name">${esc(name)}</span>
+          <span class="pill pill-${/running/.test(st) ? 'running' : 'stopped'}">${esc(st)}</span>
+        </div>
+        <div class="machine-meta">${esc(img)} - ${cpus ?? '?'} cpu${mem != null ? ' - ' + formatBytes(mem) : ''}</div>
+        <div class="row-actions" style="margin-top:8px">
+          <button class="btn btn-sm btn-ghost" data-copy="${esc(name)}">Copy shell command</button>
+          <button class="btn btn-sm btn-ghost btn-danger" data-stop-machine="${esc(m.id || name)}">Stop</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  root.querySelectorAll('[data-copy]').forEach((btn) => btn.addEventListener('click', () => onCopy(btn.dataset.copy)));
+  root.querySelectorAll('[data-stop-machine]').forEach((btn) => btn.addEventListener('click', () => onStop(btn.dataset.stopMachine)));
+}
+
+/// Footer version + macOS + build metadata.
+export function renderFooter(state) {
+  const v = (state && state.version) || [];
+  const cli = v.find((x) => /cli/i.test(x.appName)) || v[0];
+  const api = v.find((x) => /api/i.test(x.appName));
+  els.footerCli().textContent = cli ? `${cli.version} (${shortHash(cli.commit, 8)})` : '-';
+  els.footerApi().textContent = api ? `${api.version} (${shortHash(api.commit, 8)})` : 'unreachable';
+  els.footerMacos().textContent = state?.macosVersion || '-';
+  els.footerBuild().textContent = cli ? `${cli.buildType || '-'}` : '-';
+}
+
+// ---------- sparkline internals ----------
+
+function pushSpark(cpu, mem) {
+  sparkHistory.cpu.push(cpu || 0);
+  sparkHistory.mem.push(mem || 0);
+  if (sparkHistory.cpu.length > SPARK_N) sparkHistory.cpu.shift();
+  if (sparkHistory.mem.length > SPARK_N) sparkHistory.mem.shift();
+}
+
+function drawSpark(svg, data, valEl, valText) {
+  if (!svg) return;
+  const poly = svg.querySelector('polyline');
+  if (!data.length) { poly.setAttribute('points', ''); valEl.textContent = valText; return; }
+  const max = Math.max(...data, 1);
+  const step = 100 / Math.max(SPARK_N - 1, 1);
+  const offset = (SPARK_N - data.length) * step;
+  const pts = data.map((v, i) => `${(offset + i * step).toFixed(2)},${(24 - (v / max) * 22).toFixed(2)}`).join(' ');
+  poly.setAttribute('points', pts);
+  valEl.textContent = valText;
+}
