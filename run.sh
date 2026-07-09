@@ -8,12 +8,12 @@ cd "$(dirname "$0")"
 
 release=0
 allow_remote=0
-exec_enabled=0
+no_exec=0
 for arg in "$@"; do
   case "$arg" in
     --release) release=1 ;;
     --allow-remote) allow_remote=1 ;;
-    --exec) exec_enabled=1 ;;
+    --no-exec) no_exec=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -26,5 +26,5 @@ else
 fi
 
 export CONTAINER_DASHBOARD_ALLOW_REMOTE="$allow_remote"
-export CONTAINERDASHBOARD_ENABLE_EXEC="$exec_enabled"
+export CONTAINERDASHBOARD_DISABLE_EXEC="$no_exec"
 exec $binary

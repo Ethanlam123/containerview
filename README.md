@@ -6,7 +6,7 @@ A real-time, local operational dashboard for Apple's [`container`](https://githu
 
 A single dark-theme page with six panels:
 
-1. **Containers** - table (name, image, status pill, IP, CPU%, memory, arch) with expandable rows that reveal ports, mounts, hostname, a live SSE logs drawer, and (when exec is enabled) an interactive terminal pane. Inline Stop / Start / Kill, plus a "+ New" create-and-run modal.
+1. **Containers** - table (name, image, status pill, IP, CPU%, memory, arch) with expandable rows that reveal ports, mounts, hostname, a live SSE logs drawer, and an interactive terminal pane (on by default). Inline Stop / Start / Kill, plus a "+ New" create-and-run modal.
 2. **Resource Overview** - containers (running / total), memory allocated, networks, plus aggregated CPU% and memory sparklines.
 3. **Builder** - buildkit builder state, CPUs, memory, container id, with Start / Stop.
 4. **Disk Usage** - images / containers / volumes: active vs total, size, reclaimable, each with a Prune button (confirm dialog).
@@ -32,10 +32,10 @@ swift build -c release
 ```sh
 swift run                                       # debug, default
 ./run.sh                                        # same, but pins CWD for assets
-./run.sh --release                              # build + run the release binary
-./run.sh --release --exec                       # ...with the interactive terminal enabled
+./run.sh --release                              # build + run the release binary (terminal on by default)
+./run.sh --release --no-exec                    # ...with the interactive terminal off
 .build/release/ContainerDashboard               # run a built release directly
-CONTAINERDASHBOARD_ENABLE_EXEC=1 swift run      # env-var equivalent of --exec
+CONTAINERDASHBOARD_DISABLE_EXEC=1 swift run     # ...terminal off
 ```
 
 Then open <http://127.0.0.1:8080>.
@@ -48,7 +48,7 @@ The server binds to **127.0.0.1 only** and refuses to start for any non-loopback
 | --- | --- | --- |
 | `CONTAINER_DASHBOARD_PORT` | `8080` | TCP port to listen on. 8080 is heavily contested on macOS (meeting apps, dev servers); set this to run without editing source. |
 | `CONTAINER_DASHBOARD_ALLOW_REMOTE` | unset | `1` permits a non-loopback bind (`run.sh --allow-remote`). Off keeps the server loopback-only. |
-| `CONTAINERDASHBOARD_ENABLE_EXEC` | unset | `1` enables the interactive terminal: the `exec` WebSocket route and the Terminal button. Off returns 404 and hides the button. |
+| `CONTAINERDASHBOARD_DISABLE_EXEC` | unset | Exec (the interactive terminal) is ON by default. `1` turns the `exec` WebSocket route + Terminal button off (route 404, button hidden) for shared/multi-user hosts. |
 | `CONTAINERDASHBOARD_ALLOW_REMOTE_BIND` | unset | `1` lets `container run -p` bind a non-loopback host-ip. Off rewrites published ports to `127.0.0.1` and rejects an explicit non-loopback host-ip. |
 
 ## Architecture
@@ -126,7 +126,7 @@ An interactive shell into a running container, served over a WebSocket:
 ws://127.0.0.1:8080/api/containers/<id>/exec?cols=80&rows=24
 ```
 
-- **Opt-in.** Disabled by default; set `CONTAINERDASHBOARD_ENABLE_EXEC=1`. When off the route returns 404, `/api/capabilities` reports `{exec:false}`, and the frontend hides the Terminal button.
+- **On by default.** Opt out with `CONTAINERDASHBOARD_DISABLE_EXEC=1` for shared/multi-user hosts where an arbitrary shell route should not be live. When off the route returns 404, `/api/capabilities` reports `{exec:false}`, and the frontend hides the Terminal button.
 - **Fixed command.** The server always runs `container exec -i -t <id> /bin/sh`. Keystrokes travel PTY-master -> slave -> container stdin and never become a `Process` argument, so there is no host-shell injection vector.
 - **Origin guard.** The same loopback-`Origin` / `Sec-Fetch-Site` check that guards writes runs inside the WebSocket upgrade; a cross-origin upgrade is rejected with 403.
 - **Teardown.** A clean disconnect is reaped on `ws.onClose`. Dirty disconnects (lid close, VPN drop, NAT idle) send no FIN, so the connection is heartbeat-bounded: Vapor pings every 30 s and force-closes if no pong returns (~60 s bound), with a 30 min safety-net that closes any one session regardless. `ExecPool` caps concurrency at 8 (overflow returns a "terminal pool full" close).
@@ -150,7 +150,7 @@ The dashboard is loopback-only and validates every path parameter / image-ref / 
 ```
 Sources/ContainerDashboard/
   app.swift              @main entry; binds loopback, runs the server
-  configure.swift        middleware + service wiring; reads exec opt-in
+  configure.swift        middleware + service wiring; reads exec opt-out
   routes.swift           endpoint registration + boundary validation
   CLI/
     CommandRunner.swift  Process shell-out (arg arrays) + LogStream
