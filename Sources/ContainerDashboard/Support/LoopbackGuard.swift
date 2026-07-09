@@ -48,7 +48,9 @@ enum LoopbackGuard {
         while let ai = cur {
             var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             if getnameinfo(ai.pointee.ai_addr, ai.pointee.ai_addrlen, &buf, socklen_t(buf.count), nil, 0, NI_NUMERICHOST) == 0 {
-                out.append(String(cString: buf))
+                // NUL-terminated host name in a zero-padded buffer: truncate then
+                // decode (String(cString:) on [CChar] is deprecated).
+                out.append(String(decoding: buf.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self))
             }
             cur = ai.pointee.ai_next
         }

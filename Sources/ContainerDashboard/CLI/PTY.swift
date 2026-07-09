@@ -19,7 +19,10 @@ enum PTY {
         guard unlockpt(master) == 0 else { close(master); throw OpenError.unlockpt }
         var buf = [CChar](repeating: 0, count: 1024)
         guard ptsname_r(master, &buf, buf.count) == 0 else { close(master); throw OpenError.ptsname }
-        let path = String(cString: buf)
+        // ptsname_r writes a NUL-terminated path into the zero-padded buffer;
+        // truncate at the first NUL before decoding (String(cString:) on [CChar]
+        // is deprecated, and the raw decode would include the padding).
+        let path = String(decoding: buf.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
         let slave = open(path, O_RDWR | O_NOCTTY)
         guard slave >= 0 else { close(master); throw OpenError.openSlave }
         return (master, slave, path)
