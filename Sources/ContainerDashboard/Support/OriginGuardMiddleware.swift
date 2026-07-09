@@ -28,4 +28,20 @@ struct OriginGuardMiddleware: AsyncMiddleware {
         if secFetchSite == "cross-site" { return true }
         return false
     }
+
+    /// WebSocket upgrade gate. `shouldBlock` only covers POST/DELETE, so a ws
+    /// upgrade (GET + Upgrade: websocket) is NOT covered by it. This is the
+    /// blocker gate enforced inside Vapor's `shouldUpgrade` (reject = nil). A
+    /// browser always sends `Origin` on a ws upgrade; a non-browser client (CLI)
+    /// sends none and is allowed. A present Origin must resolve to loopback, and
+    /// `Sec-Fetch-Site` must not be `cross-site`. Pure - unit-tested standalone.
+    static func shouldBlockWS(origin: String?, secFetchSite: String?) -> Bool {
+        if let origin, !origin.isEmpty {
+            guard let url = URL(string: origin) else { return true }   // malformed -> block
+            let host = url.host ?? ""
+            guard !host.isEmpty, LoopbackGuard.isLoopback(host) else { return true }
+        }
+        if secFetchSite == "cross-site" { return true }
+        return false
+    }
 }

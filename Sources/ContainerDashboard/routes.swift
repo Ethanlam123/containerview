@@ -3,7 +3,7 @@ import Vapor
 /// Registers every API endpoint. `runner` is the cache-decorated runner;
 /// `tracker` holds CPU% baselines across polls. Both are constructed once in
 /// `configure` and threaded in (no global state).
-func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: StatsTracker) {
+func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: StatsTracker, execEnabled: Bool) {
     // MARK: Reads
 
     app.get("api", "state") { _ async -> DashboardState in
@@ -36,6 +36,12 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
 
     app.get("api", "system", "dns") { req async throws -> Response in
         try await passthrough { try await ContainerCLI.dnsDomains(runner) }
+    }
+
+    /// Capability flags for the frontend (e.g. hide the Terminal button when exec
+    /// is disabled). Cheap GET; mirrors the opt-in read at configure time.
+    app.get("api", "capabilities") { _ async -> CapabilitiesResponse in
+        CapabilitiesResponse(exec: execEnabled)
     }
 
     // MARK: Container lifecycle
@@ -89,6 +95,76 @@ func registerRoutes(_ app: Application, runner: any CommandRunner, tracker: Stat
         } catch {
             throw Abort(.internalServerError, reason: "image pull failed")
         }
+    }
+
+    // MARK: Exec (interactive terminal; opt-in)
+
+    // `container exec -i -t <id> /bin/sh` over a WebSocket. The id is validated
+    // and the ws Origin/Sec-Fetch-Site checked BEFORE the upgrade (a ws upgrade
+    // is a GET, so the POST/DELETE OriginGuard does not cover it). The checks run
+    // in the GET handler so a cross-origin upgrade is rejected with a real 403
+    // (not a nil-upgrade). Disabled entirely (404) unless CONTAINERDASHBOARD_ENABLE_EXEC=1.
+    app.get("api", "containers", ":id", "exec") { req async throws -> Response in
+        guard execEnabled else { throw Abort(.notFound) }
+        let id = try validatedID(req)
+        if OriginGuardMiddleware.shouldBlockWS(
+            origin: req.headers.first(name: .origin),
+            secFetchSite: req.headers.first(name: HTTPHeaders.Name("Sec-Fetch-Site"))
+        ) {
+            throw Abort(.forbidden, reason: "cross-origin websocket blocked")
+        }
+        let cols = clampQuery(req, "cols", min: 20, max: 300, default: 80)
+        let rows = clampQuery(req, "rows", min: 1, max: 100, default: 24)
+        return req.webSocket(
+            shouldUpgrade: { _ async throws -> HTTPHeaders? in [:] },
+            onUpgrade: { _, ws async in
+                // Pool cap. Acquired here (post-upgrade) so a refused session
+                // closes cleanly; released on close (clean or ping-timeout).
+                do { try await ExecPool.shared.acquire() }
+                catch {
+                    try? await ws.send("[terminal pool full]\n")
+                    _ = try? await ws.close().get()
+                    return
+                }
+                let stream = PTYProcessRunner().exec(
+                    binary: "container", args: ["exec", "-i", "-t", id, "/bin/sh"],
+                    cols: cols, rows: rows
+                )
+                // client -> child. onUpgrade runs off the channel event loop (Vapor
+                // wraps it in a Task), so the loop-bound sync setters would trap -
+                // use the async overloads, which self-hop to the loop.
+                let onTextCb: @Sendable (WebSocket, String) async -> Void = { _, text in
+                    stream.send(Data(text.utf8))
+                }
+                let onBinaryCb: @Sendable (WebSocket, ByteBuffer) async -> Void = { _, buf in
+                    stream.send(Data(buf.readableBytesView))
+                }
+                ws.onText(onTextCb)
+                ws.onBinary(onBinaryCb)
+                // Dirty-disconnect heartbeat: the library pings every interval and
+                // force-closes if no pong arrives before the next ping (~60s bound
+                // on lid-close / VPN-drop / NAT-idle, where no FIN is ever sent).
+                ws.pingInterval = .seconds(30)
+                // child -> client
+                Task {
+                    for try await chunk in stream.output { try await ws.send(raw: chunk, opcode: .binary) }
+                    _ = try? await ws.close().get()
+                }
+                // Safety net: bound any one session to 30 min regardless.
+                let net = Task {
+                    try? await Task.sleep(for: .seconds(1800))
+                    stream.close()
+                    _ = try? await ws.close().get()
+                }
+                // Teardown (clean close, ping-timeout, or safety net): reap the
+                // child and free the pool slot.
+                ws.onClose.whenComplete { _ in
+                    stream.close()
+                    net.cancel()
+                    Task { await ExecPool.shared.release() }
+                }
+            }
+        )
     }
 
     // MARK: Builder
@@ -154,4 +230,16 @@ private struct RunResponse: Codable {
 /// `POST /api/images/pull` body. The reference is validated after decoding.
 private struct ImagePullRequest: Codable {
     let reference: String
+}
+
+/// `GET /api/capabilities` body: feature flags the frontend renders against.
+private struct CapabilitiesResponse: Content {
+    let exec: Bool
+}
+
+/// Parse `?key=` as Int, fail-closed to `default` on any parse error, then clamp
+/// into `[min, max]`. Used for the exec ws cols/rows query params.
+private func clampQuery(_ req: Request, _ key: String, min lo: Int, max hi: Int, default def: Int) -> UInt16 {
+    let raw = req.query[Int.self, at: key] ?? def
+    return UInt16(Swift.max(lo, Swift.min(hi, raw)))
 }

@@ -248,7 +248,8 @@ struct ProcessCommandRunner: CommandRunner {
     }
 
     /// Resolve a binary name through `$PATH`; absolute/relative paths pass through.
-    private static func resolve(_ binary: String) -> String? {
+    /// Internal so the PTY runner can reuse it (same PATH resolution).
+    static func resolve(_ binary: String) -> String? {
         if binary.contains("/") { return binary }
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
         for dir in path.split(separator: ":") {
