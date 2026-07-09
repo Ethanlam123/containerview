@@ -1,6 +1,9 @@
 # Swift Package Manager build output
 .build/
 
+# Native .app bundle output (build-app.sh)
+build/
+
 # SwiftPM/Xcode caches
 .swiftpm/
 DerivedData/

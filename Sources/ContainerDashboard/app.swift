@@ -1,8 +1,23 @@
 import Vapor
+import Darwin
+import Dispatch
 
 @main
 struct App {
     static func main() async throws {
+        // Parent-process watch (desktop-app mode). When the launching shell
+        // exits - including Force-Quit / kill -9, which skip Vapor's graceful
+        // shutdown - the kernel delivers EXIT and we reap ourselves, so no
+        // server lingers as an orphan. No-op for `swift run` / direct CLI use:
+        // the foreground parent stays alive while the server runs, so the
+        // source never fires. This removes the main argument for running the
+        // server in-process (see docs/desktop-app-plan.md Phase 2.5 / 6).
+        let parentWatch = DispatchSource.makeProcessSource(
+            identifier: getppid(), eventMask: .exit, queue: .global()
+        )
+        parentWatch.setEventHandler { exit(EXIT_SUCCESS) }
+        parentWatch.activate()
+
         var env = try Environment.detect()
         try LoggingSystem.bootstrap(from: &env)
         let app = try await Application.make(env)
