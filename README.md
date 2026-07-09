@@ -42,6 +42,22 @@ Then open <http://127.0.0.1:8080>.
 
 The server binds to **127.0.0.1 only** and refuses to start for any non-loopback address unless run with `--allow-remote` (`CONTAINER_DASHBOARD_ALLOW_REMOTE=1`). Loopback binding is why no auth is required; enabling remote access removes that guarantee and is discouraged.
 
+## Desktop app (macOS `.app`)
+
+The dashboard also ships as a native macOS app: a thin AppKit `WKWebView` shell that owns a window and the server's lifetime. 100% of the existing UI/server is reused - the shell spawns the release binary out-of-process on an ephemeral loopback port and loads it.
+
+```sh
+./build-app.sh                 # swift build -c release + swiftc shell + assemble + ad-hoc sign
+open build/ContainerDashboard.app
+```
+
+- Picks a free loopback port itself, so there is no `CONTAINER_DASHBOARD_PORT` juggling.
+- The window loads `http://127.0.0.1:<port>` (loopback), never a bundled `file://`/custom scheme - `OriginGuardMiddleware` requires a loopback `Origin` on writes and on the exec WebSocket upgrade, so a non-loopback load would silently 403 every POST.
+- Closing the window or `Cmd+Q` reaps the server. Force-Quit / `kill -9` of the app is covered by a **parent-process watch** the server installs in bundled mode (`DispatchSource` on its parent PID), so no Vapor child lingers as an orphan. CLI use (`swift run` / release binary) is unaffected - `nohup`/`disown` semantics are preserved.
+- Ad-hoc signed for local use: the first launch shows a one-time Gatekeeper prompt (right-click -> Open, or launch via `open` from a terminal). It is **not** sandboxed (it must spawn `container` and bind a socket); notarization and a `.dmg` are out of scope until the app is distributed beyond the building machine.
+
+See [`docs/desktop-app-plan.md`](docs/desktop-app-plan.md) for the full design and phase breakdown.
+
 ### Environment variables
 
 | Variable | Default | Effect |
