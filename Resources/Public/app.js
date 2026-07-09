@@ -42,13 +42,12 @@ document.addEventListener('visibilitychange', onVisibility);
 document.addEventListener('keydown', onKeydown);
 function onKeydown(e) {
   if (e.key === 'Escape') {
-    // The shell owns Esc while the terminal has focus (vim, readline, abort);
-    // otherwise Esc dismisses the topmost surface in priority order: image
-    // modal, then create modal, then the terminal tab (back to Logs).
+    // The shell owns Esc while a terminal has focus (vim, readline, abort);
+    // otherwise Esc dismisses the topmost modal. The terminal lives in the
+    // drawer, so it is dismissed by collapsing the drawer, not by Esc.
     if (document.activeElement?.classList.contains('xterm-helper-textarea')) return;
     if (!$('modal').classList.contains('hidden')) { closeModal(); return; }
     if (!$('create-modal').classList.contains('hidden')) { closeCreate(); return; }
-    if (currentTerminal) { activateTab(currentTerminal.id, 'logs'); return; }
   }
   // "/" focuses the image filter (common dashboard convention); passthrough
   // when the user is already typing in an input / terminal.
@@ -123,7 +122,7 @@ function paint(state, ok) {
   renderHeader(state, ok);
   // onOrphaned closes the logs stream + clears `expanded` for any container
   // that vanished this tick (renderContainers drops its detail row).
-  renderContainers(state, expanded, execEnabled, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); closeTerminalIfId(id); });
+  renderContainers(state, expanded, execEnabled, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); closeTerminal(id); });
   renderBuilder(state);
   renderDiskUsage(state, onPrune);
   renderImages(state, $('image-search').value, openImageModal);
@@ -141,7 +140,7 @@ async function toggleExpand(id) {
   if (expanded.has(id)) {
     expanded.delete(id);
     closeLogs(id);
-    closeTerminalIfId(id);
+    closeTerminal(id);
     const d = document.querySelector(`tr.row-detail[data-detail="${api.cssEscape(id)}"]`);
     if (d) d.remove();
     setCaret(row, false);
@@ -154,7 +153,7 @@ async function toggleExpand(id) {
     const detail = await api.inspectContainer(id);
     renderContainerDetail(detail, id, execEnabled);
     openLogs(id);
-    wireDetailTabs(id);
+    openDrawerTerminal(id);   // auto-mount the exec session for this drawer
   } catch (err) {
     const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
     if (root) root.innerHTML = `<div class="row-error">detail unavailable: ${api.esc(err.message)}</div>`;
@@ -490,11 +489,12 @@ async function onPullSubmit(e) {
 
 // ---------- terminal (exec) ----------
 
-// The terminal lives as a tab in the container detail drawer (co-located with
-// logs), not a modal. One session at a time: opening a second disposes the
-// first. `data-terminal` (not `data-act`) keeps the row button off the
-// optimistic-action path. The backend sends binary frames; see terminal.js.
-let currentTerminal = null;
+// One exec session per expanded drawer, keyed by container id, so several
+// drawers can each hold a live terminal (ExecPool caps the total at 8). The
+// terminal sits below the logs in the detail row; the focus-restore in
+// renderContainers keeps an active session typing across poll ticks. Opening a
+// drawer auto-mounts its terminal; collapsing tears it down + reaps the child.
+const terminals = new Map();    // id -> { dispose }
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-terminal]');
@@ -503,47 +503,23 @@ document.addEventListener('click', (e) => {
   openTerminalFor(b.dataset.terminal);
 });
 
-// Row "Terminal" button: expand the drawer (if collapsed), then switch to the
-// Terminal tab, which lazily opens the ws + xterm.
+// Row "Terminal" button: expand the drawer (which auto-opens the terminal),
+// then focus it so typing works immediately.
 async function openTerminalFor(id) {
   if (!expanded.has(id)) await toggleExpand(id);
-  activateTab(id, 'terminal');
-}
-
-// Bind the tab strip after the detail body is stamped (once; the detail node is
-// preserved across poll ticks, so the handlers + active tab survive).
-function wireDetailTabs(id) {
-  const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
-  root?.querySelectorAll('.detail-tab').forEach((tab) => {
-    tab.addEventListener('click', () => activateTab(id, tab.dataset.tab));
-  });
-}
-
-function activateTab(id, which) {
-  const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
-  if (!root) return;
-  root.querySelectorAll('.detail-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === which));
-  root.querySelectorAll('.detail-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== which));
-  if (which === 'terminal') openDrawerTerminal(id);
-  else closeTerminalIfId(id);   // leaving the terminal tab tears it down
+  document.querySelector(`[data-terminal-mount="${api.cssEscape(id)}"] .xterm-helper-textarea`)?.focus();
 }
 
 function openDrawerTerminal(id) {
-  if (currentTerminal?.id === id) return;            // already open in this drawer
-  if (currentTerminal) { currentTerminal.handle.dispose(); currentTerminal = null; }
+  if (terminals.has(id)) return;                     // already live in this drawer
   const mount = document.querySelector(`[data-terminal-mount="${api.cssEscape(id)}"]`);
   if (!mount) return;
-  currentTerminal = { id, handle: openTerminal(id, mount) };
+  terminals.set(id, openTerminal(id, mount));
 }
 
-function closeTerminal() {
-  if (!currentTerminal) return;
-  currentTerminal.handle.dispose();
-  currentTerminal = null;
-}
-
-function closeTerminalIfId(id) {
-  if (currentTerminal?.id === id) closeTerminal();
+function closeTerminal(id) {
+  const h = terminals.get(id);
+  if (h) { h.dispose(); terminals.delete(id); }
 }
 
 // ---------- advanced disclosure ----------

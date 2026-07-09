@@ -221,11 +221,10 @@ export function renderContainerDetail(body, id, exec) {
   if (!c) { root.textContent = 'no detail'; return; }
   const ports = c.configuration?.publishedPorts || [];
   const mounts = c.configuration?.mounts || [];
-  // Terminal tab + panel render only when exec is enabled; the row Terminal
-  // button is also gated on this, so a user never sees a dead tab.
-  const termTab = exec ? `<button class="detail-tab" data-tab="terminal">Terminal</button>` : '';
-  const termPanel = exec
-    ? `<div class="detail-panel hidden" data-panel="terminal"><div class="drawer-terminal" data-terminal-mount="${esc(id)}"></div></div>`
+  // Terminal pane renders only when exec is enabled. It sits below the logs in
+  // the same drawer (a stacked split) and mounts as soon as the drawer opens.
+  const termPane = exec
+    ? `<div class="detail-terminal" data-terminal-mount="${esc(id)}"></div>`
     : '';
   root.innerHTML = `
     <div class="detail-kv"><span class="k">Hostname</span><span class="v">${esc(c.configuration?.hostname || c.status?.networks?.[0]?.hostname || '-')}</span></div>
@@ -236,21 +235,15 @@ export function renderContainerDetail(body, id, exec) {
     <div class="detail-kv"><span class="k">Started</span><span class="v">${esc(c.status?.startedDate || '-')}</span></div>
     <div class="detail-kv"><span class="k">Ports</span><span class="v">${ports.length ? ports.map((p) => `${p.hostAddress}:${p.hostPort}->${p.containerPort}/${p.proto}`).join(', ') : '-'}</span></div>
     <div class="detail-kv"><span class="k">Mounts</span><span class="v">${mounts.length ? mounts.map((m) => `${mountKind(m.type)}: ${esc(m.source)} -> ${esc(m.destination)}`).join(', ') : '-'}</span></div>
-    <div class="detail-tabs">
-      <button class="detail-tab active" data-tab="logs">Logs</button>
-      ${termTab}
-    </div>
-    <div class="detail-panel" data-panel="logs">
-      <div class="detail-logs" data-logs="${esc(id)}">
-        <div class="logs-bar">
-          <span class="k dim">Logs</span>
-          <button class="btn btn-sm btn-ghost" data-logs-toggle>Pause</button>
-          <button class="btn btn-sm btn-ghost" data-logs-clear>Clear</button>
-        </div>
-        <pre class="logs-pre" data-logs-pre></pre>
+    <div class="detail-logs" data-logs="${esc(id)}">
+      <div class="logs-bar">
+        <span class="k dim">Logs</span>
+        <button class="btn btn-sm btn-ghost" data-logs-toggle>Pause</button>
+        <button class="btn btn-sm btn-ghost" data-logs-clear>Clear</button>
       </div>
+      <pre class="logs-pre" data-logs-pre></pre>
     </div>
-    ${termPanel}
+    ${termPane}
   `;
 }
 
