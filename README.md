@@ -33,8 +33,9 @@ swift build -c release
 swift run                                       # debug, default
 ./run.sh                                        # same, but pins CWD for assets
 ./run.sh --release                              # build + run the release binary
+./run.sh --release --exec                       # ...with the interactive terminal enabled
 .build/release/ContainerDashboard               # run a built release directly
-CONTAINERDASHBOARD_ENABLE_EXEC=1 swift run      # ...with the interactive terminal enabled
+CONTAINERDASHBOARD_ENABLE_EXEC=1 swift run      # env-var equivalent of --exec
 ```
 
 Then open <http://127.0.0.1:8080>.
