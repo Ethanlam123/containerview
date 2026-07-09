@@ -121,6 +121,11 @@ export function renderContainers(state, expanded, exec, onToggle, onOrphaned) {
   for (const d of Array.from(tbody.querySelectorAll('tr.row-detail'))) {
     liveDetails.set(d.dataset.detail, d);
   }
+  // The rebuild detaches + re-attaches detail nodes, which blurs an interactive
+  // terminal living inside one. Capture focus now, restore after re-attach so
+  // an active exec session survives polling.
+  const ae = document.activeElement;
+  const restoreFocus = ae && Array.from(liveDetails.values()).some((d) => d.contains(ae)) ? ae : null;
 
   if (containers.length === 0) {
     tbody.innerHTML = '';
@@ -141,6 +146,7 @@ export function renderContainers(state, expanded, exec, onToggle, onOrphaned) {
       if (detail) tr.after(detail);
     });
   }
+  if (restoreFocus && document.body.contains(restoreFocus)) restoreFocus.focus();
 
   // Rows that vanished this tick: drop their orphaned detail + tell the caller
   // (it owns the logs stream + expanded set).
@@ -208,13 +214,19 @@ function mountKind(t) {
   return (t && typeof t === 'object' && Object.keys(t)[0]) || 'mount';
 }
 
-export function renderContainerDetail(body, id) {
+export function renderContainerDetail(body, id, exec) {
   const root = document.querySelector(`[data-detail-body="${cssEscape(id)}"]`);
   if (!root) return;
   const c = Array.isArray(body) ? body[0] : body;
   if (!c) { root.textContent = 'no detail'; return; }
   const ports = c.configuration?.publishedPorts || [];
   const mounts = c.configuration?.mounts || [];
+  // Terminal tab + panel render only when exec is enabled; the row Terminal
+  // button is also gated on this, so a user never sees a dead tab.
+  const termTab = exec ? `<button class="detail-tab" data-tab="terminal">Terminal</button>` : '';
+  const termPanel = exec
+    ? `<div class="detail-panel hidden" data-panel="terminal"><div class="drawer-terminal" data-terminal-mount="${esc(id)}"></div></div>`
+    : '';
   root.innerHTML = `
     <div class="detail-kv"><span class="k">Hostname</span><span class="v">${esc(c.configuration?.hostname || c.status?.networks?.[0]?.hostname || '-')}</span></div>
     <div class="detail-kv"><span class="k">OS / Arch</span><span class="v">${esc(c.configuration?.platform?.os || '-')}/${esc(c.configuration?.platform?.architecture || '-')}</span></div>
@@ -224,14 +236,21 @@ export function renderContainerDetail(body, id) {
     <div class="detail-kv"><span class="k">Started</span><span class="v">${esc(c.status?.startedDate || '-')}</span></div>
     <div class="detail-kv"><span class="k">Ports</span><span class="v">${ports.length ? ports.map((p) => `${p.hostAddress}:${p.hostPort}->${p.containerPort}/${p.proto}`).join(', ') : '-'}</span></div>
     <div class="detail-kv"><span class="k">Mounts</span><span class="v">${mounts.length ? mounts.map((m) => `${mountKind(m.type)}: ${esc(m.source)} -> ${esc(m.destination)}`).join(', ') : '-'}</span></div>
-    <div class="detail-logs" data-logs="${esc(id)}">
-      <div class="logs-bar">
-        <span class="k dim">Logs</span>
-        <button class="btn btn-sm btn-ghost" data-logs-toggle>Pause</button>
-        <button class="btn btn-sm btn-ghost" data-logs-clear>Clear</button>
-      </div>
-      <pre class="logs-pre" data-logs-pre></pre>
+    <div class="detail-tabs">
+      <button class="detail-tab active" data-tab="logs">Logs</button>
+      ${termTab}
     </div>
+    <div class="detail-panel" data-panel="logs">
+      <div class="detail-logs" data-logs="${esc(id)}">
+        <div class="logs-bar">
+          <span class="k dim">Logs</span>
+          <button class="btn btn-sm btn-ghost" data-logs-toggle>Pause</button>
+          <button class="btn btn-sm btn-ghost" data-logs-clear>Clear</button>
+        </div>
+        <pre class="logs-pre" data-logs-pre></pre>
+      </div>
+    </div>
+    ${termPanel}
   `;
 }
 

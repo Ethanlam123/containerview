@@ -39,7 +39,30 @@ $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') close
 document.querySelector('details.advanced')?.addEventListener('toggle', loadAdvanced);
 
 document.addEventListener('visibilitychange', onVisibility);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeModal(); closeCreate(); } });
+document.addEventListener('keydown', onKeydown);
+function onKeydown(e) {
+  if (e.key === 'Escape') {
+    // The shell owns Esc while the terminal has focus (vim, readline, abort);
+    // otherwise Esc dismisses the topmost surface in priority order: image
+    // modal, then create modal, then the terminal tab (back to Logs).
+    if (document.activeElement?.classList.contains('xterm-helper-textarea')) return;
+    if (!$('modal').classList.contains('hidden')) { closeModal(); return; }
+    if (!$('create-modal').classList.contains('hidden')) { closeCreate(); return; }
+    if (currentTerminal) { activateTab(currentTerminal.id, 'logs'); return; }
+  }
+  // "/" focuses the image filter (common dashboard convention); passthrough
+  // when the user is already typing in an input / terminal.
+  if (e.key === '/' && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    $('image-search').focus();
+  }
+}
+function isTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+    || el.isContentEditable || el.classList.contains('xterm-helper-textarea');
+}
 
 // Render last-known-good immediately (before first poll resolves) so a stopped
 // system still shows something.
@@ -100,7 +123,7 @@ function paint(state, ok) {
   renderHeader(state, ok);
   // onOrphaned closes the logs stream + clears `expanded` for any container
   // that vanished this tick (renderContainers drops its detail row).
-  renderContainers(state, expanded, execEnabled, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); });
+  renderContainers(state, expanded, execEnabled, toggleExpand, (id) => { expanded.delete(id); closeLogs(id); closeTerminalIfId(id); });
   renderBuilder(state);
   renderDiskUsage(state, onPrune);
   renderImages(state, $('image-search').value, openImageModal);
@@ -118,6 +141,7 @@ async function toggleExpand(id) {
   if (expanded.has(id)) {
     expanded.delete(id);
     closeLogs(id);
+    closeTerminalIfId(id);
     const d = document.querySelector(`tr.row-detail[data-detail="${api.cssEscape(id)}"]`);
     if (d) d.remove();
     setCaret(row, false);
@@ -128,8 +152,9 @@ async function toggleExpand(id) {
   insertDetailPlaceholder(id, row);
   try {
     const detail = await api.inspectContainer(id);
-    renderContainerDetail(detail, id);
+    renderContainerDetail(detail, id, execEnabled);
     openLogs(id);
+    wireDetailTabs(id);
   } catch (err) {
     const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
     if (root) root.innerHTML = `<div class="row-error">detail unavailable: ${api.esc(err.message)}</div>`;
@@ -319,10 +344,16 @@ function openCreate() {
   dl.innerHTML = names.map((n) => `<option value="${api.esc(n)}"></option>`).join('');
   $('create-error').textContent = '';
   $('create-modal').classList.remove('hidden');
+  restoreCreateForm();
   setTimeout(() => $('create-form').querySelector('input[name="image"]').focus(), 0);
 }
 
-function closeCreate() {
+function closeCreate(opts) {
+  // On cancel (X / background / Esc) persist the in-progress edits so reopening
+  // resumes where the user left off. A successful submit saves the submitted
+  // body explicitly and passes { submitted: true } to skip re-saving the now
+  // reset (empty) form.
+  if (!opts?.submitted) saveCreateForm(gatherCreate());
   $('create-modal').classList.add('hidden');
 }
 
@@ -356,9 +387,10 @@ async function onCreateSubmit(e) {
   btn.textContent = 'Creating...';
   try {
     await api.createContainer(body);
+    saveCreateForm(body);
     $('create-form').reset();
     document.querySelectorAll('.repeat-item').forEach((x) => x.remove());
-    closeCreate();
+    closeCreate({ submitted: true });
     await poll(true);   // confirm the new row appears
   } catch (err) {
     // The server is the validation authority; it returns a field label (never
@@ -367,6 +399,62 @@ async function onCreateSubmit(e) {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Create & start';
+  }
+}
+
+// ---------- persist create-form values ----------
+
+const FORM_KEY = 'containerDashboard:createForm';
+
+function saveCreateForm(data) {
+  try { localStorage.setItem(FORM_KEY, JSON.stringify(data)); } catch { /* quota */ }
+}
+
+function restoreCreateForm() {
+  const form = $('create-form');
+  // Always start from a clean form: reset scalars + strip repeat rows left from
+  // a previous open (the form is only fully reset on a successful submit), so
+  // stale rows don't accumulate. Then refill from saved values, if any.
+  form.reset();
+  for (const name of ['ports', 'env', 'volumes']) clearRepeatGroup(name);
+  let data;
+  try { data = JSON.parse(localStorage.getItem(FORM_KEY) || 'null'); } catch { /* malformed */ }
+  if (!data) return;
+  const set = (name, val) => { const el = form.querySelector(`input[name="${name}"]`); if (el) el.value = val ?? ''; };
+  set('image', data.image);
+  set('name', data.name);
+  set('args', (data.args || []).join(' '));
+  set('cpus', data.cpus);
+  set('memory', data.memory);
+  const rm = form.querySelector('input[name="rm"]'); if (rm) rm.checked = !!data.rm;
+  restoreRepeat('ports', data.ports || []);
+  restoreRepeat('env', data.env || []);
+  restoreRepeat('volumes', data.volumes || []);
+}
+
+// Strip added rows + clear the seed input so a group is back to one empty row.
+function clearRepeatGroup(name) {
+  const group = document.querySelector(`.repeat[data-repeat="${name}"]`);
+  if (!group) return;
+  group.querySelectorAll('.repeat-item').forEach((r) => r.remove());
+  const seed = group.querySelector('.repeat-rows > input');
+  if (seed) seed.value = '';
+}
+
+// Rehydrate one repeatable group: drop added rows, fill the seed row with the
+// first value, then append a row per remaining value.
+function restoreRepeat(name, values) {
+  const group = document.querySelector(`.repeat[data-repeat="${name}"]`);
+  if (!group) return;
+  const rows = group.querySelector('.repeat-rows');
+  rows.querySelectorAll('.repeat-item').forEach((r) => r.remove());
+  const first = rows.querySelector('input');
+  if (!first) return;
+  first.value = values[0] || '';
+  for (const v of values.slice(1)) {
+    addRepeatRow(group);
+    const inputs = rows.querySelectorAll('input');
+    inputs[inputs.length - 1].value = v;
   }
 }
 
@@ -402,33 +490,60 @@ async function onPullSubmit(e) {
 
 // ---------- terminal (exec) ----------
 
-// One terminal at a time. `data-terminal` (not `data-act`) keeps this off the
-// optimistic-action path, which disables buttons + forces a poll - wrong for a
-// panel open. The backend sends binary frames; see terminal.js for the wiring.
+// The terminal lives as a tab in the container detail drawer (co-located with
+// logs), not a modal. One session at a time: opening a second disposes the
+// first. `data-terminal` (not `data-act`) keeps the row button off the
+// optimistic-action path. The backend sends binary frames; see terminal.js.
 let currentTerminal = null;
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-terminal]');
   if (!b) return;
   e.stopPropagation();
-  openTerminalPanel(b.dataset.terminal);
+  openTerminalFor(b.dataset.terminal);
 });
-$('terminal-close').addEventListener('click', closeTerminalPanel);
-$('terminal-modal').addEventListener('click', (e) => { if (e.target.id === 'terminal-modal') closeTerminalPanel(); });
 
-function openTerminalPanel(id) {
-  if (currentTerminal) { currentTerminal.dispose(); currentTerminal = null; }
-  const mount = $('terminal-mount');
-  mount.innerHTML = '';
-  $('terminal-title').textContent = `Terminal - ${id.slice(0, 12)}`;
-  $('terminal-modal').classList.remove('hidden');
-  currentTerminal = openTerminal(id, mount);
+// Row "Terminal" button: expand the drawer (if collapsed), then switch to the
+// Terminal tab, which lazily opens the ws + xterm.
+async function openTerminalFor(id) {
+  if (!expanded.has(id)) await toggleExpand(id);
+  activateTab(id, 'terminal');
 }
 
-function closeTerminalPanel() {
-  $('terminal-modal').classList.add('hidden');
-  if (currentTerminal) { currentTerminal.dispose(); currentTerminal = null; }
-  $('terminal-mount').innerHTML = '';
+// Bind the tab strip after the detail body is stamped (once; the detail node is
+// preserved across poll ticks, so the handlers + active tab survive).
+function wireDetailTabs(id) {
+  const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
+  root?.querySelectorAll('.detail-tab').forEach((tab) => {
+    tab.addEventListener('click', () => activateTab(id, tab.dataset.tab));
+  });
+}
+
+function activateTab(id, which) {
+  const root = document.querySelector(`[data-detail-body="${api.cssEscape(id)}"]`);
+  if (!root) return;
+  root.querySelectorAll('.detail-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === which));
+  root.querySelectorAll('.detail-panel').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== which));
+  if (which === 'terminal') openDrawerTerminal(id);
+  else closeTerminalIfId(id);   // leaving the terminal tab tears it down
+}
+
+function openDrawerTerminal(id) {
+  if (currentTerminal?.id === id) return;            // already open in this drawer
+  if (currentTerminal) { currentTerminal.handle.dispose(); currentTerminal = null; }
+  const mount = document.querySelector(`[data-terminal-mount="${api.cssEscape(id)}"]`);
+  if (!mount) return;
+  currentTerminal = { id, handle: openTerminal(id, mount) };
+}
+
+function closeTerminal() {
+  if (!currentTerminal) return;
+  currentTerminal.handle.dispose();
+  currentTerminal = null;
+}
+
+function closeTerminalIfId(id) {
+  if (currentTerminal?.id === id) closeTerminal();
 }
 
 // ---------- advanced disclosure ----------
