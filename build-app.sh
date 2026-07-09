@@ -39,15 +39,20 @@ echo "==> Asserting exec bits"
 [[ -x "$MACOS/ContainerDashboard" ]]       || { echo "missing exec bit: shell"  >&2; exit 1; }
 [[ -x "$MACOS/ContainerDashboardServer" ]] || { echo "missing exec bit: server" >&2; exit 1; }
 
-# Copied assets can carry resource forks / Finder info / quarantine xattrs that
-# codesign rejects ("resource fork, Finder information, or similar detritus not
-# allowed"). Strip them off the whole bundle before signing. Use the absolute
-# path: a conda-provided `xattr` shim may shadow Apple's tool and lacks -r.
+# codesign rejects Finder info / resource forks / file-provider tags as
+# "resource fork, Finder information, or similar detritus not allowed". Finder/
+# LaunchServices stamps com.apple.FinderInfo on the bundle dir once the app has
+# been opened, and copied assets can carry their own. `xattr -cr` clears them.
+# (com.apple.provenance is also present on every compiled Mach-O but does NOT
+# block signing and cannot be removed, so it is left in place.) Absolute path: a
+# conda-provided `xattr` shim may shadow Apple's tool and lacks -r.
 /usr/bin/xattr -cr "$APP"
 
-echo "==> Ad-hoc signing (per Mach-O then bundle; --deep is deprecated and unneeded)"
+echo "==> Ad-hoc signing (auxiliary server binary, then the bundle which signs the main exec)"
 codesign --force -s - "$MACOS/ContainerDashboardServer"
-codesign --force -s - "$MACOS/ContainerDashboard"
+# Signing the main executable can prompt LaunchServices to stamp com.apple.FinderInfo
+# on the bundle dir, which the bundle sign then rejects as detritus; clear again.
+/usr/bin/xattr -cr "$APP"
 codesign --force -s - "$APP"
 
 echo "==> Built: $APP"

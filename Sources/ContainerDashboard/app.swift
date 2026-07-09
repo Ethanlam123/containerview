@@ -2,21 +2,31 @@ import Vapor
 import Darwin
 import Dispatch
 
+// Held at file scope so ARC retains the dispatch source for the whole process
+// lifetime. A local declared inside main()'s `if` block is released at the end
+// of that block, which cancels the source - and the parent-exit reap would
+// never fire.
+nonisolated(unsafe) private var parentWatch: (any DispatchSourceProcess)?
+
 @main
 struct App {
     static func main() async throws {
-        // Parent-process watch (desktop-app mode). When the launching shell
-        // exits - including Force-Quit / kill -9, which skip Vapor's graceful
-        // shutdown - the kernel delivers EXIT and we reap ourselves, so no
-        // server lingers as an orphan. No-op for `swift run` / direct CLI use:
-        // the foreground parent stays alive while the server runs, so the
-        // source never fires. This removes the main argument for running the
-        // server in-process (see docs/desktop-app-plan.md Phase 2.5 / 6).
-        let parentWatch = DispatchSource.makeProcessSource(
-            identifier: getppid(), eventMask: .exit, queue: .global()
-        )
-        parentWatch.setEventHandler { exit(EXIT_SUCCESS) }
-        parentWatch.activate()
+        // Parent-process watch (desktop-app mode only). When the launching
+        // shell exits - including Force-Quit / kill -9, which skip Vapor's
+        // graceful shutdown - the kernel delivers EXIT and we reap ourselves,
+        // so no server lingers as an orphan. Gated to the bundled app so the
+        // CLI (`swift run` / release binary) keeps its old semantics: `nohup`,
+        // `disown`, and supervisors that re-exec are not surprised by a reap,
+        // and there is no PID-recycle footgun. See docs/desktop-app-plan.md
+        // Phase 2.5.
+        if ProcessInfo.processInfo.environment["CONTAINER_DASHBOARD_BUNDLED"] == "1" {
+            let watch = DispatchSource.makeProcessSource(
+                identifier: getppid(), eventMask: .exit, queue: .global()
+            )
+            watch.setEventHandler { exit(EXIT_SUCCESS) }
+            watch.activate()
+            parentWatch = watch
+        }
 
         var env = try Environment.detect()
         try LoggingSystem.bootstrap(from: &env)

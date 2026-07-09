@@ -104,17 +104,13 @@ final class ServerProcess {
         }
     }
 
-    /// SIGTERM, then SIGKILL after a 3s grace (reuses the SSE reap shape). Runs
-    /// the force-reap on a background queue so quitting the UI is not delayed.
+    /// SIGTERM (Vapor shuts down gracefully on it). No SIGKILL fallback: when
+    /// the shell exits, the server's bundled parent-watch reaps it, so a
+    /// PID-reuse-prone local kill is unnecessary (parentWatch in app.swift,
+    /// gated to bundled mode).
     func terminate() {
         stderrPipe.fileHandleForReading.readabilityHandler = nil
-        guard process.isRunning else { return }
-        process.terminate()
-        let pid = process.processIdentifier
-        DispatchQueue.global().async {
-            usleep(3_000_000)
-            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-        }
+        if process.isRunning { process.terminate() }
     }
 }
 
@@ -197,6 +193,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         healthTask?.cancel()
         server?.terminate()
+    }
+
+    // Closing the window quits the app (and reaps the server via the path
+    // above). Without this, macOS keeps a windowless app alive holding the
+    // port, and a relaunch hits the single-instance guard against that
+    // windowless app.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 
     // MARK: health poll -> show window
