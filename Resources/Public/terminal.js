@@ -34,6 +34,17 @@ export function openTerminal(id, mountEl) {
   let cols = 80, rows = 24;
   try { fit.fit(); cols = term.cols; rows = term.rows; } catch { /* defaults */ }
 
+  // Refit the glyph grid on window resize (debounced). The PTY size is fixed at
+  // open time (no CLI resize API), so this only rescales the display - the
+  // cols/rows sent to the backend do not change. Guarded: fit() after dispose
+  // throws. One listener per terminal; removed on dispose.
+  let resizeTimer = null;
+  const onResize = () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { try { fit.fit(); } catch { /* disposed */ } }, 120);
+  };
+  window.addEventListener('resize', onResize);
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${proto}//${location.host}/api/containers/${encodeURIComponent(id)}/exec?cols=${cols}&rows=${rows}`;
   const ws = new WebSocket(url);
@@ -61,6 +72,8 @@ export function openTerminal(id, mountEl) {
   term.focus();
   return {
     dispose() {
+      window.removeEventListener('resize', onResize);
+      if (resizeTimer) clearTimeout(resizeTimer);
       ws.onclose = null;
       ws.onerror = null;
       try { ws.close(); } catch { /* already gone */ }

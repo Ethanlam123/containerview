@@ -189,7 +189,7 @@ function rowHtml(c, st, exec) {
       <td class="row-arch">${esc(ip)}</td>
       <td class="num">${cpu}</td>
       <td class="num">${mem}</td>
-      <td class="row-arch">${esc(arch)}</td>
+      <td class="row-arch col-arch">${esc(arch)}</td>
       <td class="row-actions" data-actions="${esc(c.id)}">
         ${termBtn}
         <button class="btn btn-sm btn-ghost" data-act="start">Start</button>

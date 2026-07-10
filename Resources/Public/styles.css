@@ -106,20 +106,50 @@ code, pre, .mono { font-family: var(--mono); }
 .banner-warn { background: rgba(255, 159, 10, .1); color: var(--orange); }
 
 /* ---------- grid ---------- */
+/* Area maps per breakpoint: panels gain columns as the window widens, so a wide
+   window stops wasting horizontal space. minmax(0,1fr) prevents a long mono
+   string (image ref, mount path) from blowing a column out. At <900 the area
+   names are undefined so panels fall back to auto-placement (stacked, DOM
+   order). See docs/responsive-layout-plan.md. */
 .grid {
   display: grid;
   gap: var(--pad);
   padding: var(--pad) 24px 24px;
   grid-template-columns: 1fr;
 }
+.panel-containers { grid-area: containers; }
+.panel-resource   { grid-area: resource; }
+.panel-builder    { grid-area: builder; }
+.panel-disk       { grid-area: disk; }
+.panel-images     { grid-area: images; }
+.panel-machines   { grid-area: machines; }
 @media (min-width: 900px) {
-  .grid { grid-template-columns: 2fr 1fr; }
-  .panel-builder, .panel-disk { grid-column: span 1; }
-  .panel-containers { grid-column: 1; }
-  .panel-resource { grid-column: 2; }
+  .grid {
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    grid-template-areas:
+      "containers resource"
+      "containers builder"
+      "images     disk"
+      "images     machines";
+  }
 }
-@media (min-width: 1440px) {
-  .grid { grid-template-columns: 2fr 1fr; }
+@media (min-width: 1350px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+      "containers containers resource"
+      "containers containers builder"
+      "images      disk      machines";
+  }
+}
+@media (min-width: 1800px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-areas:
+      "containers containers containers resource"
+      "containers containers containers builder"
+      "images      images      disk      machines";
+  }
 }
 
 /* ---------- panels ---------- */
@@ -164,6 +194,13 @@ code, pre, .mono { font-family: var(--mono); }
 .data-table tr.row:hover { background: var(--surface-2); }
 .row-name { font-weight: 500; }
 .row-img, .row-arch { color: var(--dim); font-family: var(--mono); font-size: 12px; }
+
+/* Hide the Arch column below 1100px: it duplicates the detail row's OS/Arch
+   (render.js), and at narrow widths the table would otherwise scroll. IP is
+   not duplicated anywhere, so it stays. */
+@media (max-width: 1099px) {
+  .data-table .col-arch { display: none; }
+}
 
 .expand-caret { color: var(--dim); cursor: pointer; user-select: none; width: 16px; text-align: center; }
 .expand-caret.open { transform: rotate(90deg); display: inline-block; }
