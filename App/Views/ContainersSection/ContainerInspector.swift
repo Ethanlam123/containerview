@@ -10,6 +10,7 @@ struct ContainerInspector: View {
     let model: DashboardModel
     @State private var acting = false
     @State private var tab: InspectorTab = .details
+    @State private var confirmingRemove = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +32,15 @@ struct ContainerInspector: View {
             .padding(8)
         }
         .background(.windowBackground)
+        .confirmationDialog(
+            "Remove \(container.id)? This permanently deletes the container.",
+            isPresented: $confirmingRemove, titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                Task { await model.remove(id: container.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private enum InspectorTab: Hashable { case details, logs, terminal }
@@ -62,6 +72,10 @@ struct ContainerInspector: View {
             } else {
                 Button("Start") { perform(.start) }.controlSize(.small).disabled(acting)
             }
+            Button(role: .destructive) { confirmingRemove = true } label: {
+                Image(systemName: "trash")
+            }
+            .controlSize(.small).help("Remove container (permanent)")
         }
     }
 

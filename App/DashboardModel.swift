@@ -27,7 +27,11 @@ final class DashboardModel {
     enum Action: Sendable { case stop, start, kill }
 
     /// Run a container lifecycle action, then refresh so the row confirms.
+    /// The optimistic flip makes the row respond instantly; the poll (3s+ while
+    /// the images section is slow) confirms or reverts. Without it the row lagged
+    /// long enough that Stop/Start looked broken.
     func act(_ kind: Action, id: String) async {
+        applyOptimistic(kind, id: id)
         do {
             switch kind {
             case .stop: try await client?.stopContainer(id)
@@ -37,7 +41,60 @@ final class DashboardModel {
             poll()
         } catch {
             lastError = (error as? APIError)?.reason ?? error.localizedDescription
+            poll()   // revert the optimistic state to the server's truth
         }
+    }
+
+    private func applyOptimistic(_ kind: Action, id: String) {
+        guard var state = lastState, var containers = state.containers,
+              let i = containers.firstIndex(where: { $0.id == id }) else { return }
+        let next = kind == .start ? "running" : "stopped"
+        let old = containers[i]
+        containers[i] = ContainerList(
+            id: old.id, configuration: old.configuration,
+            status: ContainerList.Status(state: next, networks: old.status.networks, startedDate: old.status.startedDate))
+        state.containers = containers
+        lastState = state
+    }
+
+    /// Permanently remove a container. The server exposes no remove endpoint
+    /// (only prune-all), so this shells out to `container rm --force` directly.
+    /// The id is server-provided state (never user-typed); it is still validated
+    /// against the server's ID pattern since deletion is irreversible. The CLI
+    /// runs off the main actor (waitUntilExit would otherwise freeze the UI).
+    func remove(id: String) async {
+        guard let path = findOnPATH("container") else {
+            lastError = "container CLI not found"; return
+        }
+        guard let pattern = try? Regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"),
+              id.wholeMatch(of: pattern) != nil else {
+            lastError = "invalid container id"; return
+        }
+        let exit = await Task.detached(priority: .userInitiated) { Self.runRemove(path: path, id: id) }.value
+        if exit != 0 {
+            lastError = "remove failed (container rm exit \(exit))"
+            poll()
+            return
+        }
+        if var state = lastState, var containers = state.containers {
+            containers.removeAll { $0.id == id }
+            state.containers = containers
+            lastState = state
+        }
+        poll()
+    }
+
+    private static nonisolated func runRemove(path: String, id: String) -> Int32 {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: path)
+        proc.arguments = ["rm", "--force", id]
+        if let devnull = FileHandle(forWritingAtPath: "/dev/null") {
+            proc.standardOutput = devnull
+            proc.standardError = devnull
+        }
+        do { try proc.run(); proc.waitUntilExit() }
+        catch { return -1 }
+        return proc.terminationStatus
     }
 
     /// Pull an image; returns nil on success or an error message.
