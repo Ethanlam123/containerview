@@ -83,6 +83,11 @@ struct ServerClient: Sendable {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(["reference": reference])
+        // The server responds 202 only after the CLI pull finishes, which it allows
+        // up to 600s (ContainerCLI.imagePull). URLSession.shared's default 60s
+        // request timeout would kill a large-image pull first, so exceed the
+        // server budget here.
+        req.timeoutInterval = 620
         let (data, resp) = try await URLSession.shared.data(for: req)
         try ensureOk(resp, data: data)
     }

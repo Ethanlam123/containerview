@@ -22,6 +22,7 @@ struct CreateContainerSheet: View {
     @State private var args = ""
     @State private var rm = false
     @State private var submitting = false
+    @State private var status: String?
     @State private var error: String?
 
     var body: some View {
@@ -30,7 +31,7 @@ struct CreateContainerSheet: View {
                 Text("New container").font(.headline)
                 Spacer()
                 Button("Cancel") { save(); dismiss() }
-                Button("Create & start") { submit() }
+                Button(submitting ? (status ?? "Working…") : "Create & start") { submit() }
                     .disabled(submitting || image.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(10)
@@ -65,8 +66,25 @@ struct CreateContainerSheet: View {
     private func submit() {
         submitting = true
         error = nil
+        status = nil
         let body = buildBody()
         Task {
+            // `container run` auto-pulls inside the server's 60s run window, which
+            // is too tight for large images (n8n, etc.) and surfaces as a generic
+            // "container run failed". Pre-pull via the dedicated 600s endpoint when
+            // the image isn't local so run only has to start an already-present
+            // image. Server untouched; this is purely client orchestration.
+            let local = Set((model.lastState?.images ?? []).map { $0.configuration.name })
+            if !local.contains(body.image) {
+                status = "Pulling \(body.image)…"
+                if let pullErr = await model.pullImage(body.image) {
+                    submitting = false
+                    status = nil
+                    error = "pull failed: \(pullErr)"
+                    return
+                }
+            }
+            status = "Starting…"
             do {
                 _ = try await model.client?.createContainer(body)
                 save(body)
@@ -74,6 +92,7 @@ struct CreateContainerSheet: View {
                 dismiss()
             } catch {
                 submitting = false
+                status = nil
                 self.error = (error as? APIError)?.reason ?? error.localizedDescription
             }
         }
