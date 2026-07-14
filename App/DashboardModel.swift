@@ -20,6 +20,7 @@ final class DashboardModel {
     private(set) var client: ServerClient?
     private var pollTask: Task<Void, Never>?
     private var inFlight = false
+    private var cacheTick = 0
 
     private static let cacheKey = "containerDashboard:lastState"
 
@@ -95,7 +96,13 @@ final class DashboardModel {
     func setAutoRefresh(_ on: Bool) { autoRefresh = on; scheduleNext() }
     func setInterval(_ s: Double) { intervalSec = max(1, min(60, s)); scheduleNext() }
 
-    func pause() { pollTask?.cancel() }
+    func pause() {
+        // Authoritative cache write on background; poll() also writes every 10th
+        // tick as a force-quit-during-foreground safety net.
+        cacheToDefaults()
+        pollTask?.cancel()
+        polling = false
+    }
     func resume() { poll(); scheduleNext() }
 
     private func scheduleNext() {
@@ -120,12 +127,17 @@ final class DashboardModel {
                 let state = try await client.fetchState()
                 self?.lastState = state
                 self?.lastError = nil
-                if let data = try? JSONEncoder().encode(state) {
-                    UserDefaults.standard.set(data, forKey: Self.cacheKey)
-                }
+                self?.cacheTick += 1
+                if self?.cacheTick.isMultiple(of: 10) == true { self?.cacheToDefaults() }
             } catch {
                 self?.lastError = (error as? APIError)?.reason ?? error.localizedDescription
             }
         }
+    }
+
+    private func cacheToDefaults() {
+        guard let state = lastState,
+              let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: Self.cacheKey)
     }
 }
