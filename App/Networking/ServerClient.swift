@@ -32,7 +32,12 @@ struct ServerClient: Sendable {
     }
 
     func inspectImage(_ name: String) async throws -> [ImageList] {
-        let (data, resp) = try await get("api/images/inspect?name=\(escaped(name))")
+        // Build with URLComponents so the query string is encoded correctly;
+        // appendingPathComponent would fold "?name=..." into the path and 404.
+        var c = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+        c.path = "/api/images/inspect"
+        c.queryItems = [URLQueryItem(name: "name", value: name)]
+        let (data, resp) = try await getURL(c.url!)
         try ensureOk(resp, data: data)
         return try decode([ImageList].self, from: data)
     }
@@ -114,7 +119,11 @@ struct ServerClient: Sendable {
     // MARK: Helpers
 
     private func get(_ path: String) async throws -> (Data, URLResponse) {
-        var req = URLRequest(url: url(path))
+        try await getURL(url(path))
+    }
+
+    private func getURL(_ url: URL) async throws -> (Data, URLResponse) {
+        var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         return try await URLSession.shared.data(for: req)
     }
