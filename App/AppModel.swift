@@ -49,7 +49,12 @@ final class AppModel {
     }
 
     private func pollHealth(port: Int) {
-        let url = URL(string: "http://127.0.0.1:\(port)/api/state")!
+        // Probe /api/capabilities (a static flag, zero CLI calls), NOT /api/state:
+        // the full-state endpoint runs many `container` CLI calls and can take 3s+
+        // once images/containers exist, which would blow the 1.5s per-probe timeout
+        // and falsely report a launch failure. This only checks the server is alive
+        // and serving HTTP; the dashboard's own poll fetches state once ready.
+        let url = URL(string: "http://127.0.0.1:\(port)/api/capabilities")!
         healthTask = Task { [weak self] in
             // 5s ceiling: a cold Vapor release binary plus the first
             // `container system status` hit can exceed 2s on this machine.

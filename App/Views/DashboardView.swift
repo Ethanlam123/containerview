@@ -144,34 +144,23 @@ private struct SystemStatusBadge: View {
     }
 }
 
-// Non-intrusive top banner for the last poll error and section warnings.
+// Non-intrusive top banner for transient action/poll errors only. Section
+// warnings (e.g. "images: timedOut" while the images CLI is slow) are dropped:
+// they are non-actionable and, once large images make the images call exceed the
+// server's 3s budget, they would keep this orange bar on screen permanently.
 private struct StatusBanner: View {
     let model: DashboardModel
     @State private var dismissedError: String?
 
     var body: some View {
-        let warnings = model.lastState?.warnings ?? []
         let error = (model.lastError != nil && model.lastError != dismissedError) ? model.lastError : nil
-        if error != nil || !warnings.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                if let error {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        Text(error).font(.caption).lineLimit(2)
-                        Spacer()
-                        Button("Dismiss") { dismissedError = model.lastError }
-                            .buttonStyle(.borderless).font(.caption)
-                    }
-                }
-                if !warnings.isEmpty {
-                    DisclosureGroup("\(warnings.count) warning\(warnings.count == 1 ? "" : "s")") {
-                        ForEach(Array(warnings.enumerated()), id: \.offset) { _, w in
-                            Text("\(w.section): \(w.message)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .font(.caption)
-                }
+        if let error {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(error).font(.caption).lineLimit(2)
+                Spacer()
+                Button("Dismiss") { dismissedError = model.lastError }
+                    .buttonStyle(.borderless).font(.caption)
             }
             .padding(8)
             .background(.orange.opacity(0.1))

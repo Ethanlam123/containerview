@@ -104,7 +104,10 @@ private struct ImageCard: View {
 struct ImageInspectSheet: View {
     let name: String
     let client: ServerClient?
-    @State private var json = "loading…"
+    @State private var images: [ImageList]?
+    @State private var loadError: String?
+    @State private var rawJSON = ""
+    @State private var showRaw = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -116,23 +119,75 @@ struct ImageInspectSheet: View {
             }
             .padding(10)
             Divider()
-            ScrollView {
-                Text(json)
-                    .font(.system(.caption, design: .monospaced))
+            Group {
+                if let images, !images.isEmpty {
+                    Form {
+                        ForEach(Array(images.enumerated()), id: \.offset) { idx, img in
+                            imageSections(img, titled: images.count == 1 ? "Image" : "Image \(idx + 1)")
+                        }
+                        if !rawJSON.isEmpty {
+                            Section {
+                                DisclosureGroup("Raw JSON", isExpanded: $showRaw) {
+                                    Text(rawJSON)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                    .formStyle(.grouped)
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                } else if let loadError {
+                    ContentUnavailableView("Inspect failed", systemImage: "exclamationmark.triangle",
+                        description: Text(loadError))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .frame(minWidth: 520, minHeight: 380)
         .task {
-            guard let client else { json = "unavailable"; return }
+            guard let client else { loadError = "unavailable"; return }
             do {
                 let inspected = try await client.inspectImage(name)
-                let data = (try? JSONEncoder().encode(inspected)) ?? Data()
-                json = prettyJSON(data)
+                images = inspected
+                if let data = try? JSONEncoder().encode(inspected) { rawJSON = prettyJSON(data) }
             } catch {
-                json = "failed: \(error.localizedDescription)"
+                loadError = (error as? APIError)?.reason ?? error.localizedDescription
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func imageSections(_ img: ImageList, titled: String) -> some View {
+        Section(titled) {
+            LabeledContent("Name", value: img.configuration.name)
+            LabeledContent("ID", value: img.id)
+            if !img.configuration.creationDate.isEmpty {
+                LabeledContent("Created", value: img.configuration.creationDate)
+            }
+            LabeledContent("Digest", value: shortHash(img.configuration.descriptor.digest, len: 19))
+            LabeledContent("Size", value: formatBytes(img.configuration.descriptor.size))
+            if let media = img.configuration.descriptor.mediaType.nonEmpty {
+                LabeledContent("Media type", value: media)
+            }
+        }
+        if !img.variants.isEmpty {
+            Section("Variants") {
+                ForEach(img.variants, id: \.digest) { v in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(v.platform.architecture) / \(v.platform.os)\(v.platform.variant.map { " (\($0))" } ?? "")")
+                            .font(.system(.body, design: .monospaced))
+                        HStack {
+                            Text(shortHash(v.digest, len: 19)).foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatBytes(v.size)).foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                    }
+                    .padding(.vertical, 2)
+                }
             }
         }
     }

@@ -15,12 +15,9 @@ struct DiskView: View {
         if let df {
             List {
                 Section {
-                    DiskRow(title: "Containers", category: df.containers)
-                        .swipeActions { pruneButton("containers") }
-                    DiskRow(title: "Images", category: df.images)
-                        .swipeActions { pruneButton("images") }
-                    DiskRow(title: "Volumes", category: df.volumes)
-                        .swipeActions { pruneButton("volumes") }
+                    DiskRow(title: "Containers", category: df.containers) { confirming = "containers" }
+                    DiskRow(title: "Images", category: df.images) { confirming = "images" }
+                    DiskRow(title: "Volumes", category: df.volumes) { confirming = "volumes" }
                 } header: { Text("System disk usage") }
             }
             .confirmationDialog(
@@ -38,11 +35,6 @@ struct DiskView: View {
         }
     }
 
-    private func pruneButton(_ key: String) -> some View {
-        Button("Prune", role: .destructive) { confirming = key }
-            .disabled(pruningCategory != nil)
-    }
-
     private func performPrune(_ key: String) {
         pruningCategory = key
         Task {
@@ -55,24 +47,33 @@ struct DiskView: View {
 private struct DiskRow: View {
     let title: String
     let category: SystemDF.Category
+    let onPrune: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).font(.headline)
-                Spacer()
-                Text(formatBytes(category.sizeInBytes))
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 12) {
-                Text("\(category.active) active / \(category.total) total")
-                if category.reclaimable > 0 {
-                    Text("\(formatBytes(category.reclaimable)) reclaimable")
-                        .foregroundStyle(.orange)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(title).font(.headline)
+                    Spacer()
+                    Text(formatBytes(category.sizeInBytes))
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
                 }
+                HStack(spacing: 12) {
+                    Text("\(category.active) active / \(category.total) total")
+                    if category.reclaimable > 0 {
+                        Text("\(formatBytes(category.reclaimable)) reclaimable")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
-            .font(.caption).foregroundStyle(.secondary)
+            Button("Prune", role: .destructive, action: onPrune)
+                .controlSize(.small)
+                .disabled(category.reclaimable <= 0)
+                .help(category.reclaimable > 0
+                      ? "Remove unused \(title.lowercased())"
+                      : "Nothing to reclaim")
         }
         .padding(.vertical, 2)
     }
