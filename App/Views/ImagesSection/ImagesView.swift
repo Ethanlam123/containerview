@@ -2,6 +2,7 @@
 // opens a native sheet with the inspect JSON.
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct ImagesView: View {
     let model: DashboardModel

@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import ContainerMonitorCore
 
 struct MachinesView: View {
     let model: DashboardModel

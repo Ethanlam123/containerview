@@ -1,6 +1,7 @@
 // Builder section: state + resources + Start/Stop.
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct BuilderView: View {
     let model: DashboardModel

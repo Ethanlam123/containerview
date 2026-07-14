@@ -2,6 +2,7 @@
 // + reclaimable, with a Prune action (native confirmation dialog).
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct DiskView: View {
     let model: DashboardModel

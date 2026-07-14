@@ -6,6 +6,7 @@
 // Form values persist to UserDefaults (matches app.js's createForm cache).
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct CreateContainerSheet: View {
     let model: DashboardModel

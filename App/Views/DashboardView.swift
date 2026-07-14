@@ -3,6 +3,7 @@
 // container detail - filled in step 4).
 
 import SwiftUI
+import ContainerMonitorCore
 
 enum SidebarSection: String, CaseIterable, Identifiable {
     case containers, images, machines, builder, disk, system

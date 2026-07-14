@@ -3,6 +3,7 @@
 // Details / Logs / Terminal tabs. Terminal lands in step 5.
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct ContainerInspector: View {
     let container: ContainerList

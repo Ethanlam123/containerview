@@ -2,7 +2,7 @@
 
 import Foundation
 
-func formatBytes(_ n: Int64?) -> String {
+public func formatBytes(_ n: Int64?) -> String {
     guard let n, n != 0 else { return "-" }
     let sign = n < 0 ? "-" : ""
     var v = abs(Double(n))
@@ -13,23 +13,23 @@ func formatBytes(_ n: Int64?) -> String {
     return String(format: "%@%.\(fraction)f %@", sign, v, units[i])
 }
 
-func formatPercent(_ p: Double?) -> String {
+public func formatPercent(_ p: Double?) -> String {
     guard let p else { return "-" }
     let fraction = p >= 100 ? 0 : 1
     return String(format: "%.\(fraction)f%%", p)
 }
 
-func shortHash(_ s: String?, len: Int = 12) -> String {
+public func shortHash(_ s: String?, len: Int = 12) -> String {
     guard let s, !s.isEmpty else { return "-" }
     return s.replacingOccurrences(of: "sha256:", with: "").prefix(len).description
 }
 
-extension Optional where Wrapped == String {
+public extension Optional where Wrapped == String {
     var nonEmpty: String? { flatMap { $0.isEmpty ? nil : $0 } }
 }
 
 /// Pretty-print raw JSON bytes (for inspect sheets / advanced disclosure).
-func prettyJSON(_ data: Data) -> String {
+public func prettyJSON(_ data: Data) -> String {
     guard let obj = try? JSONSerialization.jsonObject(with: data),
           let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
           let s = String(data: pretty, encoding: .utf8) else {

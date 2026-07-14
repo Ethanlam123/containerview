@@ -4,6 +4,7 @@
 // the exec ws upgrade - no custom headers needed.
 
 import Foundation
+import ContainerMonitorCore
 
 struct APIError: LocalizedError, Sendable {
     let reason: String

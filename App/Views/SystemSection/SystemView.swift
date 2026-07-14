@@ -2,6 +2,7 @@
 // disclosure that lazily loads system properties + DNS JSON.
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct SystemView: View {
     let model: DashboardModel

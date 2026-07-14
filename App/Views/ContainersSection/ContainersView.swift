@@ -2,6 +2,7 @@
 // Row selection drives the inspector pane.
 
 import SwiftUI
+import ContainerMonitorCore
 
 struct ContainersView: View {
     let model: DashboardModel
