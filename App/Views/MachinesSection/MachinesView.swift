@@ -15,7 +15,7 @@ struct MachinesView: View {
                 description: Text("Try `container machine create alpine:3.22 --name dev`"))
         } else {
             List {
-                ForEach(Array(machines.enumerated()), id: \.offset) { _, m in
+                ForEach(machines, id: \.stableID) { m in
                     MachineRow(machine: m)
                 }
             }
