@@ -9,25 +9,31 @@ struct ContainerInspector: View {
     let container: ContainerList
     let model: DashboardModel
     @State private var acting = false
+    @State private var tab: InspectorTab = .details
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            TabView {
+            TabView(selection: $tab) {
                 detailsForm
                     .tabItem { Label("Details", systemImage: "info.circle") }
+                    .tag(InspectorTab.details)
                 if let client = model.client {
                     LogsView(client: client, id: container.id)
                         .tabItem { Label("Logs", systemImage: "text.alignleft") }
+                        .tag(InspectorTab.logs)
                 }
                 terminalTab
                     .tabItem { Label("Terminal", systemImage: "terminal") }
+                    .tag(InspectorTab.terminal)
             }
             .padding(8)
         }
         .background(.windowBackground)
     }
+
+    private enum InspectorTab: Hashable { case details, logs, terminal }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -69,11 +75,19 @@ struct ContainerInspector: View {
 
     @ViewBuilder
     private var terminalTab: some View {
-        if model.execEnabled, let port = model.client?.port {
+        // Gate construction on the tab being active: SwiftTermView (and its ws +
+        // PTY child) only mounts when the user opens this tab, and switching away
+        // removes it from the tree -> dismantleNSView closes the ws. So an
+        // ExecPool slot is held only while the Terminal tab is showing, not for
+        // the lifetime of the inspector. (Pool cap is 8 on the server.)
+        if model.execEnabled, let port = model.client?.port, tab == .terminal {
             SwiftTermView(port: port, id: container.id)
-        } else {
+        } else if !model.execEnabled {
             ContentUnavailableView("Terminal unavailable", systemImage: "terminal",
                 description: Text("Exec is disabled."))
+        } else {
+            ContentUnavailableView("Terminal", systemImage: "terminal",
+                description: Text("Open this tab to start an interactive shell."))
         }
     }
 
