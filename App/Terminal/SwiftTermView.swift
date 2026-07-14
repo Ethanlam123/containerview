@@ -41,11 +41,20 @@ struct SwiftTermView: NSViewRepresentable {
         @MainActor
         func start(port: Int, id: String, cols: Int, rows: Int, terminal: TerminalView) {
             self.terminal = terminal
-            let socket = ExecSocket(port: port, id: id, cols: cols, rows: rows) { [weak terminal] data in
-                guard let terminal else { return }
-                let bytes = [UInt8](data)
-                terminal.feed(byteArray: bytes[...])
-            }
+            let socket = ExecSocket(
+                port: port, id: id, cols: cols, rows: rows,
+                onOutput: { [weak terminal] data in
+                    guard let terminal else { return }
+                    terminal.feed(byteArray: [UInt8](data)[...])
+                },
+                onClose: { [weak terminal] reason in
+                    // Server dropped the ws (30-min cap, ping-timeout, pool full).
+                    // Local teardown prints [disconnected] via stop(); this is the
+                    // remote-side counterpart so the terminal says why, not freeze.
+                    guard let terminal else { return }
+                    let msg = "\r\n\u{1b}[31m[\(reason)]\u{1b}[0m\r\n"
+                    terminal.feed(byteArray: [UInt8](msg.utf8)[...])
+                })
             self.socket = socket
             socket.connect()
         }
